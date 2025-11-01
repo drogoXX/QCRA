@@ -644,6 +644,15 @@ def create_pareto_chart(sensitivity_df, top_n=20):
     # The cumulative % from sensitivity_df was based on a different order
     df_plot['Cumulative %'] = df_plot['Variance %'].cumsum()
 
+    # CRITICAL FIX: Remove any duplicate Risk IDs to prevent multiple line segments
+    # Keep only the first occurrence (highest variance) if duplicates exist
+    df_plot = df_plot.drop_duplicates(subset=['Risk ID'], keep='first').reset_index(drop=True)
+
+    # Create truncated risk names for x-axis (max 35 chars for readability)
+    df_plot['Risk_Name_Short'] = df_plot['Risk Description'].apply(
+        lambda x: x[:35] + '...' if len(x) > 35 else x
+    )
+
     # Prepare hover data with full risk description
     df_plot['hover_text'] = df_plot.apply(
         lambda row: f"<b>{row['Risk ID']}</b>: {row['Risk Description']}", axis=1
@@ -655,25 +664,30 @@ def create_pareto_chart(sensitivity_df, top_n=20):
     # Add bars for individual variance contribution on PRIMARY y-axis (auto-scaled)
     fig.add_trace(
         go.Bar(
-            x=df_plot['Risk ID'],  # Use Risk IDs only for clean x-axis
+            x=df_plot['Risk_Name_Short'],  # Use truncated risk names for readability
             y=df_plot['Variance %'],
             name='Individual Variance %',
             marker_color='#E74C3C',  # Vibrant red
+            text=df_plot['Variance %'].apply(lambda x: f'{x:.1f}%'),  # Bar labels
+            textposition='outside',  # Labels above bars
+            textfont=dict(size=10, color='#E74C3C'),
             customdata=df_plot['hover_text'],
             hovertemplate='%{customdata}<br>Individual Variance: %{y:.2f}%<extra></extra>'
         ),
         secondary_y=False
     )
 
-    # Add line for cumulative percentage on SECONDARY y-axis (0-100% scale)
+    # CRITICAL FIX: Add cumulative line as SINGLE trace with explicit connectgaps
+    # This ensures ONE continuous line instead of multiple segments
     fig.add_trace(
         go.Scatter(
-            x=df_plot['Risk ID'],  # Use Risk IDs only
+            x=df_plot['Risk_Name_Short'],  # Same x-axis as bars
             y=df_plot['Cumulative %'],
             name='Cumulative %',
-            mode='lines+markers',
+            mode='lines+markers',  # Both lines and markers
             line=dict(color='#2C3E50', width=4),  # Dark slate, thick line
             marker=dict(size=10, symbol='diamond', color='#2C3E50'),
+            connectgaps=True,  # Ensure continuous line even if gaps exist
             customdata=df_plot['hover_text'],
             hovertemplate='%{customdata}<br>Cumulative: %{y:.1f}%<extra></extra>'
         ),
@@ -700,12 +714,12 @@ def create_pareto_chart(sensitivity_df, top_n=20):
 
     # Update x-axis with 45-degree rotation and preserve order
     fig.update_xaxes(
-        title_text="Risk ID (ordered by variance contribution)",
+        title_text="Risk Description (ordered by variance contribution)",
         tickangle=-45,  # Rotate labels 45 degrees
-        tickfont=dict(size=11),
+        tickfont=dict(size=10),
         title_font=dict(size=12),
         categoryorder='array',  # Preserve the exact order from data
-        categoryarray=df_plot['Risk ID'].tolist()  # Explicit order: highest to lowest variance
+        categoryarray=df_plot['Risk_Name_Short'].tolist()  # Explicit order: highest to lowest variance
     )
 
     # Update PRIMARY y-axis (left) - Individual variance (auto-scaled)
@@ -729,14 +743,14 @@ def create_pareto_chart(sensitivity_df, top_n=20):
         title_font=dict(size=12)
     )
 
-    # Update layout with proper dimensions and margins
+    # Update layout with 16x8 inch figure size and proper dimensions
     fig.update_layout(
         title={
             'text': 'Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
-            'font': {'size': 16}
+            'font': {'size': 17}
         },
-        width=1400,  # Increased width for better spacing
-        height=700,  # Good height for readability
+        width=1536,  # 16 inches * 96 DPI = 1536 pixels
+        height=768,  # 8 inches * 96 DPI = 768 pixels
         hovermode='x unified',
         showlegend=True,
         legend=dict(
@@ -747,7 +761,7 @@ def create_pareto_chart(sensitivity_df, top_n=20):
             x=0.5,
             font=dict(size=11)
         ),
-        margin=dict(l=80, r=80, t=120, b=120),  # Proper margins for rotated labels
+        margin=dict(l=100, r=100, t=140, b=200),  # Larger bottom margin for rotated risk names
         font=dict(size=11),
         plot_bgcolor='white',
         paper_bgcolor='white'
