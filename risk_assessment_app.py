@@ -615,39 +615,27 @@ def create_enhanced_tornado_chart(sensitivity_df, top_n=15):
     
     return fig
 
-def create_pareto_chart(sensitivity_df, top_n=15):
-    """Create horizontal Pareto chart showing cumulative variance contribution"""
-    # Take top N and reverse order (highest at top)
+def create_pareto_chart(sensitivity_df, top_n=20):
+    """Create Pareto chart showing cumulative variance contribution"""
     df_plot = sensitivity_df.head(top_n).copy()
-    df_plot = df_plot.iloc[::-1]  # Reverse so highest is at top
-
-    # Create readable y-axis labels with Risk ID and truncated description
-    df_plot['Y_Label'] = df_plot.apply(
-        lambda row: f"{row['Risk ID']}: {row['Risk Description'][:40]}..."
-        if len(row['Risk Description']) > 40
-        else f"{row['Risk ID']}: {row['Risk Description']}",
-        axis=1
-    )
 
     # Full text for hover
     df_plot['hover_text'] = df_plot.apply(
         lambda row: f"<b>{row['Risk ID']}</b>: {row['Risk Description']}", axis=1
     )
 
-    # Create figure with secondary x-axis
+    # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Add horizontal bars for individual variance contribution
+    # Add vertical bars for individual variance contribution
     fig.add_trace(
         go.Bar(
-            y=df_plot['Y_Label'],
-            x=df_plot['Variance %'],
+            x=df_plot['Risk ID'],
+            y=df_plot['Variance %'],
             name='Variance Contribution',
-            orientation='h',
             marker_color='indianred',
             customdata=df_plot['hover_text'],
-            hovertemplate='%{customdata}<br>Variance: %{x:.2f}%<extra></extra>',
-            width=0.6
+            hovertemplate='%{customdata}<br>Variance: %{y:.2f}%<extra></extra>'
         ),
         secondary_y=False
     )
@@ -655,39 +643,32 @@ def create_pareto_chart(sensitivity_df, top_n=15):
     # Add line for cumulative percentage
     fig.add_trace(
         go.Scatter(
-            y=df_plot['Y_Label'],
-            x=df_plot['Cumulative %'].iloc[::-1],  # Reverse cumulative for proper display
+            x=df_plot['Risk ID'],
+            y=df_plot['Cumulative %'],
             name='Cumulative %',
             mode='lines+markers',
             line=dict(color='navy', width=3),
             marker=dict(size=8, symbol='diamond'),
             customdata=df_plot['hover_text'],
-            hovertemplate='%{customdata}<br>Cumulative: %{x:.1f}%<extra></extra>'
+            hovertemplate='%{customdata}<br>Cumulative: %{y:.1f}%<extra></extra>'
         ),
         secondary_y=True
     )
 
-    # Add 80% reference line (vertical line in horizontal chart)
-    fig.add_vline(x=80, line_dash="dash", line_color="green",
+    # Add 80% reference line
+    fig.add_hline(y=80, line_dash="dash", line_color="green",
                   annotation_text="80% threshold",
-                  annotation_position="top")
+                  secondary_y=True)
 
     # Update axes
-    fig.update_xaxes(title_text="Individual Variance Contribution (%)", secondary_y=False)
-    fig.update_xaxes(title_text="Cumulative Variance Contribution (%)", secondary_y=True, range=[0, 105])
-    fig.update_yaxes(title_text="", tickfont=dict(size=11))
-
-    # Dynamic height based on number of items (40px per item, minimum 600px)
-    chart_height = max(600, top_n * 45)
+    fig.update_xaxes(title_text="Risk ID")
+    fig.update_yaxes(title_text="Individual Variance Contribution (%)", secondary_y=False)
+    fig.update_yaxes(title_text="Cumulative Variance Contribution (%)", secondary_y=True, range=[0, 105])
 
     fig.update_layout(
-        title={
-            'text': 'Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
-            'x': 0.5,
-            'xanchor': 'center'
-        },
-        height=chart_height,
-        hovermode='y unified',
+        title='Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
+        height=600,
+        hovermode='x unified',
         showlegend=True,
         legend=dict(
             orientation="h",
@@ -695,9 +676,7 @@ def create_pareto_chart(sensitivity_df, top_n=15):
             y=1.02,
             xanchor="right",
             x=1
-        ),
-        margin=dict(l=400, r=100, t=100, b=80),  # Large left margin for labels
-        font=dict(size=12)
+        )
     )
 
     return fig
@@ -978,7 +957,7 @@ def main():
             The **Pareto principle** suggests that roughly 80% of effects come from 20% of causes.
             This chart identifies the "vital few" risks that drive most of the uncertainty.
             """)
-            pareto_chart = create_pareto_chart(sensitivity_df, top_n=15)
+            pareto_chart = create_pareto_chart(sensitivity_df, top_n=20)
             st.plotly_chart(pareto_chart, use_container_width=True)
             
             # Find 80% threshold
