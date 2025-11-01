@@ -1,0 +1,53 @@
+﻿Risk ID,Risk Description,Initial risk,Likelihood,Likely Initial Risk,Schedule Impact?,Residual risk,Likelihood,Likely Residual Risk ,Cost of Measures
+1,Client Behavior,"300,000 CHF",20%,"60,000 CHF",Yes ,"300,000 CHF",10%,"30,000 CHF","10,000 CHF"
+2,Cash Flow,"300,000 CHF",10%,"30,000 CHF",No,"300,000 CHF",0%,0 CHF,0 CHF
+3,Plant Rejection,"64,500,000 CHF",1%,"645,000 CHF",No,"64,500,000 CHF",1%,"322,500 CHF","300,000 CHF"
+4,Contract Complexity,"7,500,000 CHF",15%,"1,125,000 CHF",Yes ,"7,500,000 CHF",10%,"750,000 CHF",0 CHF
+5,Client and OWE lack for specific knowledge,"43,000,000 CHF",5%,"2,150,000 CHF",Yes ,"43,000,000 CHF",5%,"2,150,000 CHF",0 CHF
+6,QA Assurance of KVI documentation,"7,500,000 CHF",25%,"1,875,000 CHF",Yes ,"7,500,000 CHF",10%,"750,000 CHF","288,000 CHF"
+7,MD2 Data and relevant BP,"500,000 CHF",50%,"250,000 CHF",Yes ,"500,000 CHF",25%,"125,000 CHF",0 CHF
+8,Dealy on TSD BANF Prep,"11,000,000 CHF",3%,"275,000 CHF",Yes ,"11,000,000 CHF",3%,"275,000 CHF",0 CHF
+9,Client Enabling Works Delay,"2,000,000 CHF",50%,"1,000,000 CHF",Yes ,0 CHF,0%,0 CHF,0 CHF
+10,Loss Prevention,"1,000,000 CHF",25%,"250,000 CHF",Yes ,"500,000 CHF",25%,"125,000 CHF","50,000 CHF"
+11,Application of an amine open-art technology,"140,000,000 CHF",8%,"10,500,000 CHF",Yes ,"140,000,000 CHF",3%,"4,200,000 CHF",0 CHF
+12,Tec/Comm Evaluation,"1,000,000 CHF",15%,"150,000 CHF",Yes ,"1,000,000 CHF",5%,"50,000 CHF",0 CHF
+13,Adequacy of KVI Template,"10,000,000 CHF",50%,"5,000,000 CHF",Yes ,"10,000,000 CHF",25%,"2,500,000 CHF","75,000 CHF"
+14,Modification in ERF,"28,000 CHF",20%,"5,600 CHF",Yes ,0 CHF,0%,0 CHF,0 CHF
+15,Chemical Tank size,"10,000 CHF",50%,"5,000 CHF",No,"10,000 CHF",50%,"5,000 CHF",0 CHF
+16,External Engineering Coordination,"140,000 CHF",30%,"42,000 CHF",No,"140,000 CHF",30%,"42,000 CHF",0 CHF
+17,Internal Engineering Misalignment,"280,000 CHF",60%,"168,000 CHF",No,"280,000 CHF",30%,"84,000 CHF",0 CHF
+18,Responsibility on Existing Structure,"12,000,000 CHF",20%,"2,400,000 CHF",No,"12,000,000 CHF",10%,"1,200,000 CHF",0 CHF
+19,Congested Plant,"3,200,000 CHF",20%,"640,000 CHF",No,"3,200,000 CHF",15%,"480,000 CHF","150,000 CHF"
+20,Late supplier input,"1,000,000 CHF",50%,"500,000 CHF",Yes ,"150,000 CHF",40%,"60,000 CHF","115,000 CHF"
+21,Maintenance and Operation,"500,000 CHF",90%,"450,000 CHF",Yes ,"500,000 CHF",20%,"100,000 CHF","115,000 CHF"
+22,DESIGN PHILOSOPHIES,"200,000 CHF",65%,"130,000 CHF",Yes ,"200,000 CHF",20%,"40,000 CHF","160,000 CHF"
+23,FIRE STRATEGY,"2,000,000 CHF",70%,"1,400,000 CHF",Yes ,"2,000,000 CHF",10%,"200,000 CHF","81,000 CHF"
+24,LACK OF EXPERIENCE,"10,000,000 CHF",30%,"3,000,000 CHF",No,"10,000,000 CHF",10%,"1,000,000 CHF","850,000 CHF"
+25,Plant Layout ,"528,000 CHF",50%,"264,000 CHF",Yes ,"528,000 CHF",10%,"52,800 CHF",0 CHF
+26,RAM Analysis,"70,500 CHF",50%,"35,250 CHF",Yes ,"70,500 CHF",5%,"3,525 CHF",0 CHF
+27,Pipe 3D Model,"38,000 CHF",20%,"7,600 CHF",No,"38,000 CHF",0%,0 CHF,0 CHF
+28,DCR,"1,000,000 CHF",15%,"150,000 CHF",No,"1,000,000 CHF",15%,"150,000 CHF",0 CHF
+29,Space for novel Equipment,"570,000 CHF",20%,"114,000 CHF",Yes ,"570,000 CHF",10%,"57,000 CHF",0 CHF
+30,Overall design Concept,"-3,150,000 CHF",25%,"-787,500 CHF",Yes ,"-3,150,000 CHF",50%,"-1,575,000 CHF","200,000 CHF"
+31,ATEX,"1,000,000 CHF",20%,"200,000 CHF",No,"1,000,000 CHF",10%,"100,000 CHF",0 CHF
+32,Tie-in with ERF,"6,420,000 CHF",5%,"321,000 CHF",Yes ,"6,420,000 CHF",3%,"160,500 CHF","15,000 CHF"
+33,New Procurement Technology,"18,000,000 CHF",30%,"5,400,000 CHF",Yes ,"10,000,000 CHF",10%,"1,000,000 CHF","280,000 CHF"
+34,Increase of Procurement cost and CORs during execution main Lots,"5,000,000 CHF",20%,"1,000,000 CHF",Yes ,"2,000,000 CHF",15%,"300,000 CHF","250,000 CHF"
+35,New Deliveries and Oversized Transport/Logistics,"800,000 CHF",30%,"240,000 CHF",Yes ,"500,000 CHF",15%,"75,000 CHF","70,000 CHF"
+36,Russian war conflict,"15,000,000 CHF",40%,"6,000,000 CHF",Yes ,"15,000,000 CHF",20%,"3,000,000 CHF","400,000 CHF"
+37,T&C for Supplier,"10,000,000 CHF",15%,"1,500,000 CHF",No,"10,000,000 CHF",1%,"100,000 CHF",0 CHF
+38,"""Unusual"" supply chain","13,000,000 CHF",15%,"1,950,000 CHF",Yes ,"13,000,000 CHF",10%,"1,300,000 CHF",0 CHF
+39,Big Colum Transportation,"50,000 CHF",20%,"10,000 CHF",Yes ,"50,000 CHF",0%,0 CHF,0 CHF
+40,Pre Qualified Bidders,"10,000,000 CHF",20%,"2,000,000 CHF",Yes ,"10,000,000 CHF",20%,"2,000,000 CHF",0 CHF
+41,Shutdown ,"2,000,000 CHF",50%,"1,000,000 CHF",Yes ,"2,000,000 CHF",25%,"500,000 CHF","380,000 CHF"
+42,Modularization ,"2,000,000 CHF",30%,"600,000 CHF",Yes ,"2,000,000 CHF",10%,"200,000 CHF","200,000 CHF"
+43,Commissioning ,"4,000,000 CHF",75%,"3,000,000 CHF",Yes ,"4,000,000 CHF",30%,"1,200,000 CHF","600,000 CHF"
+44,Interface with ERF Operation,"2,000,000 CHF",15%,"300,000 CHF",Yes ,"1,000,000 CHF",10%,"100,000 CHF",0 CHF
+45,Site arrangement,"3,210,000 CHF",10%,"321,000 CHF",Yes ,"3,210,000 CHF",3%,"80,250 CHF","20,000 CHF"
+46,Extreme Weather Conditions,"450,000 CHF",30%,"135,000 CHF",Yes ,"450,000 CHF",30%,"135,000 CHF",0 CHF
+47,Absorber Installation ,"2,000,000 CHF",25%,"500,000 CHF",Yes ,"2,000,000 CHF",5%,"100,000 CHF","250,000 CHF"
+48,Storage limitation at site,"1,000,000 CHF",70%,"700,000 CHF",Yes ,"1,000,000 CHF",0%,0 CHF,"200,000 CHF"
+49,Union and Authorities in the Area,"2,000,000 CHF",15%,"300,000 CHF",Yes ,"2,000,000 CHF",5%,"100,000 CHF","100,000 CHF"
+50,Ground Condition,"2,000,000 CHF",50%,"1,000,000 CHF",Yes ,"500,000 CHF",5%,"25,000 CHF","120,000 CHF"
+51,Excessive Snagging Items,"500,000 CHF",30%,"150,000 CHF",Yes ,"500,000 CHF",15%,"75,000 CHF","20,000 CHF"
+52,Process Safety,"10,000,000 CHF",99%,"9,900,000 CHF",Yes ,"1,000,000 CHF",99%,"990,000 CHF","500,000 CHF"
