@@ -633,7 +633,12 @@ def create_enhanced_tornado_chart(sensitivity_df, top_n=15):
 
 def create_pareto_chart(sensitivity_df, top_n=20):
     """Create Pareto chart showing cumulative variance contribution"""
+    # Take top N risks - already sorted by variance contribution descending
     df_plot = sensitivity_df.head(top_n).copy()
+
+    # IMPORTANT: Ensure data is sorted by Variance % descending for proper Pareto chart
+    # This ensures bars descend from left to right and cumulative curve ascends smoothly
+    df_plot = df_plot.sort_values('Variance %', ascending=False)
 
     # Prepare hover data with full risk description
     df_plot['hover_text'] = df_plot.apply(
@@ -689,12 +694,14 @@ def create_pareto_chart(sensitivity_df, top_n=20):
         secondary_y=True
     )
 
-    # Update x-axis with 45-degree rotation
+    # Update x-axis with 45-degree rotation and preserve order
     fig.update_xaxes(
-        title_text="Risk ID",
+        title_text="Risk ID (ordered by variance contribution)",
         tickangle=-45,  # Rotate labels 45 degrees
         tickfont=dict(size=11),
-        title_font=dict(size=12)
+        title_font=dict(size=12),
+        categoryorder='array',  # Preserve the exact order from data
+        categoryarray=df_plot['Risk ID'].tolist()  # Explicit order: highest to lowest variance
     )
 
     # Update PRIMARY y-axis (left) - Individual variance (auto-scaled)
