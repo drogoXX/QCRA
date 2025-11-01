@@ -638,7 +638,11 @@ def create_pareto_chart(sensitivity_df, top_n=20):
 
     # IMPORTANT: Ensure data is sorted by Variance % descending for proper Pareto chart
     # This ensures bars descend from left to right and cumulative curve ascends smoothly
-    df_plot = df_plot.sort_values('Variance %', ascending=False)
+    df_plot = df_plot.sort_values('Variance %', ascending=False).reset_index(drop=True)
+
+    # CRITICAL: Recalculate cumulative % after sorting to ensure correct Pareto curve
+    # The cumulative % from sensitivity_df was based on a different order
+    df_plot['Cumulative %'] = df_plot['Variance %'].cumsum()
 
     # Prepare hover data with full risk description
     df_plot['hover_text'] = df_plot.apply(
