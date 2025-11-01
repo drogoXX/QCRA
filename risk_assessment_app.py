@@ -618,51 +618,60 @@ def create_enhanced_tornado_chart(sensitivity_df, top_n=15):
 def create_pareto_chart(sensitivity_df, top_n=20):
     """Create Pareto chart showing cumulative variance contribution"""
     df_plot = sensitivity_df.head(top_n).copy()
-    
+
+    # Truncate long risk descriptions for x-axis labels (keep full text in hover)
+    max_label_length = 25
+    df_plot['Short Label'] = df_plot['Risk Description'].apply(
+        lambda x: x[:max_label_length] + '...' if len(x) > max_label_length else x
+    )
+
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    
+
     # Add bars for individual variance contribution
     fig.add_trace(
         go.Bar(
-            x=df_plot['Risk Description'],
+            x=df_plot['Short Label'],
             y=df_plot['Variance %'],
             name='Variance Contribution',
             marker_color='indianred',
-            hovertemplate='<b>%{x}</b><br>Variance: %{y:.2f}%<extra></extra>'
+            customdata=df_plot['Risk Description'],
+            hovertemplate='<b>%{customdata}</b><br>Variance: %{y:.2f}%<extra></extra>'
         ),
         secondary_y=False
     )
-    
+
     # Add line for cumulative percentage
     fig.add_trace(
         go.Scatter(
-            x=df_plot['Risk Description'],
+            x=df_plot['Short Label'],
             y=df_plot['Cumulative %'],
             name='Cumulative %',
             line=dict(color='navy', width=3),
             marker=dict(size=8),
-            hovertemplate='<b>%{x}</b><br>Cumulative: %{y:.1f}%<extra></extra>'
+            customdata=df_plot['Risk Description'],
+            hovertemplate='<b>%{customdata}</b><br>Cumulative: %{y:.1f}%<extra></extra>'
         ),
         secondary_y=True
     )
-    
+
     # Add 80% reference line
-    fig.add_hline(y=80, line_dash="dash", line_color="green", 
-                  annotation_text="80% threshold", 
+    fig.add_hline(y=80, line_dash="dash", line_color="green",
+                  annotation_text="80% threshold",
                   secondary_y=True)
-    
+
     # Update axes
     fig.update_xaxes(title_text="Risks", tickangle=-45)
     fig.update_yaxes(title_text="Individual Variance Contribution (%)", secondary_y=False)
     fig.update_yaxes(title_text="Cumulative Variance Contribution (%)", secondary_y=True, range=[0, 105])
-    
+
     fig.update_layout(
         title='Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
         height=600,
         hovermode='x unified',
-        showlegend=True
+        showlegend=True,
+        margin=dict(b=150)  # Increase bottom margin for rotated labels
     )
-    
+
     return fig
 
 # Main application
