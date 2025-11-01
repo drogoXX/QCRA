@@ -141,7 +141,171 @@ def calculate_statistics(results):
         'max': np.max(results)
     }
 
-def create_risk_matrix(df, risk_type='initial'):
+def create_risk_heatmap(df, risk_type='initial'):
+    """Create risk heatmap showing concentration of risks in each cell"""
+    if risk_type == 'initial':
+        impact_col = 'Initial risk_Value'
+        likelihood_col = 'Initial_Likelihood'
+        title = 'Initial Risk Heatmap'
+    else:
+        impact_col = 'Residual risk_Value'
+        likelihood_col = 'Residual_Likelihood'
+        title = 'Residual Risk Heatmap'
+    
+    # Create categories
+    impact_bins = [0, 100000, 1000000, 10000000, 100000000, np.inf]
+    impact_labels = ['Very Low', 'Low', 'Medium', 'High', 'Very High']
+    
+    likelihood_bins = [0, 0.1, 0.25, 0.5, 0.75, 1.0]
+    likelihood_labels = ['Very Low', 'Low', 'Medium', 'High', 'Very High']
+    
+    # Categorize risks (use absolute values for impact to handle opportunities)
+    df_temp = df.copy()
+    df_temp['Impact_Cat'] = pd.cut(np.abs(df_temp[impact_col]), bins=impact_bins, labels=impact_labels)
+    df_temp['Likelihood_Cat'] = pd.cut(df_temp[likelihood_col], bins=likelihood_bins, labels=likelihood_labels)
+    
+    # Create heatmap data
+    heatmap_data = []
+    for imp_cat in impact_labels:
+        row_data = []
+        for lik_cat in likelihood_labels:
+            # Count risks in this cell
+            mask = (df_temp['Impact_Cat'] == imp_cat) & (df_temp['Likelihood_Cat'] == lik_cat)
+            count = mask.sum()
+            
+            # Calculate total value in this cell
+            total_value = (df_temp.loc[mask, impact_col] * df_temp.loc[mask, likelihood_col]).sum()
+            
+            # Get risk IDs in this cell
+            risk_ids = df_temp.loc[mask, 'Risk ID'].tolist()
+            
+            row_data.append({
+                'count': count,
+                'value': total_value,
+                'risk_ids': risk_ids
+            })
+        heatmap_data.append(row_data)
+    
+    # Prepare data for plotly
+    z_counts = [[cell['count'] for cell in row] for row in heatmap_data]
+    z_values = [[cell['value']/1e6 for cell in row] for row in heatmap_data]  # Convert to millions
+    
+    # Create hover text
+    hover_text = []
+    for i, imp_cat in enumerate(impact_labels):
+        row_text = []
+        for j, lik_cat in enumerate(likelihood_labels):
+            cell = heatmap_data[i][j]
+            text = f"<b>{imp_cat} Impact / {lik_cat} Likelihood</b><br>"
+            text += f"Number of Risks: {cell['count']}<br>"
+            text += f"Total Expected Value: {cell['value']/1e6:.2f}M CHF<br>"
+            if cell['risk_ids']:
+                text += f"Risk IDs: {', '.join(map(str, cell['risk_ids']))}"
+            row_text.append(text)
+        hover_text.append(row_text)
+    
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=z_counts,
+        x=likelihood_labels,
+        y=impact_labels,
+        customdata=z_values,
+        hovertemplate='%{hovertext}<extra></extra>',
+        hovertext=hover_text,
+        colorscale='Reds',
+        colorbar=dict(title="Number<br>of Risks"),
+        text=[[f"{count}<br>{value:.1f}M" for count, value in zip(count_row, value_row)] 
+              for count_row, value_row in zip(z_counts, z_values)],
+        texttemplate="%{text}",
+        textfont={"size": 10}
+    ))
+    
+    # Add grid lines and styling
+    fig.update_xaxes(side="bottom", title="Likelihood →")
+    fig.update_yaxes(title="← Impact")
+    
+    fig.update_layout(
+        title=f'{title}<br><sub>Cell shows: Risk Count / Total Expected Value (M CHF)</sub>',
+        height=600,
+        xaxis=dict(showgrid=True, gridcolor='white', gridwidth=2),
+        yaxis=dict(showgrid=True, gridcolor='white', gridwidth=2)
+    )
+    
+    return fig
+
+def create_risk_bubble_chart(df, risk_type='initial'):
+    """Create bubble chart with risk size representing expected value"""
+    if risk_type == 'initial':
+        impact_col = 'Initial risk_Value'
+        likelihood_col = 'Initial_Likelihood'
+        title = 'Initial Risk Bubble Chart'
+    else:
+        impact_col = 'Residual risk_Value'
+        likelihood_col = 'Residual_Likelihood'
+        title = 'Residual Risk Bubble Chart'
+    
+    df_plot = df.copy()
+    
+    # Calculate expected value and use for bubble size
+    df_plot['Expected_Value'] = np.abs(df_plot[impact_col] * df_plot[likelihood_col])
+    df_plot['Risk_Type'] = df_plot[impact_col].apply(lambda x: 'Opportunity' if x < 0 else 'Risk')
+    
+    # Create risk score for coloring
+    df_plot['Risk_Score'] = df_plot[impact_col] * df_plot[likelihood_col]
+    
+    # Scale bubble sizes (cube root for better visualization)
+    df_plot['Bubble_Size'] = np.power(df_plot['Expected_Value'], 1/3) / 100
+    
+    fig = px.scatter(df_plot,
+                     x=likelihood_col,
+                     y=impact_col,
+                     size='Bubble_Size',
+                     color='Risk_Score',
+                     hover_data=['Risk ID', 'Risk Description', 'Expected_Value', 'Risk_Type'],
+                     labels={
+                         likelihood_col: 'Likelihood',
+                         impact_col: 'Impact (CHF)',
+                         'Expected_Value': 'Expected Value (CHF)'
+                     },
+                     color_continuous_scale='RdYlGn_r',
+                     title=f'{title}<br><sub>Bubble size = Expected Value | Color = Risk Score</sub>')
+    
+    # Add quadrant lines
+    median_likelihood = df_plot[likelihood_col].median()
+    median_impact = df_plot[impact_col].median()
+    
+    fig.add_vline(x=median_likelihood, line_dash="dash", line_color="gray", opacity=0.5,
+                  annotation_text="Median Likelihood", annotation_position="top")
+    fig.add_hline(y=median_impact, line_dash="dash", line_color="gray", opacity=0.5,
+                  annotation_text="Median Impact", annotation_position="right")
+    
+    # Add zero line for opportunities
+    fig.add_hline(y=0, line_dash="solid", line_color="black", opacity=0.3)
+    
+    # Add quadrant labels
+    max_likelihood = df_plot[likelihood_col].max()
+    max_impact = df_plot[impact_col].max()
+    min_impact = df_plot[impact_col].min()
+    
+    fig.add_annotation(x=median_likelihood/2, y=max_impact*0.9,
+                      text="Low Likelihood<br>High Impact",
+                      showarrow=False, font=dict(size=10, color="gray"))
+    
+    fig.add_annotation(x=median_likelihood + (max_likelihood-median_likelihood)/2, y=max_impact*0.9,
+                      text="High Likelihood<br>High Impact",
+                      showarrow=False, font=dict(size=10, color="red"))
+    
+    fig.add_annotation(x=median_likelihood/2, y=min_impact*0.5,
+                      text="Low Likelihood<br>Low Impact",
+                      showarrow=False, font=dict(size=10, color="green"))
+    
+    fig.add_annotation(x=median_likelihood + (max_likelihood-median_likelihood)/2, y=min_impact*0.5,
+                      text="High Likelihood<br>Low Impact",
+                      showarrow=False, font=dict(size=10, color="orange"))
+    
+    fig.update_layout(height=700, showlegend=True)
+    
+    return fig
     """Create interactive risk matrix"""
     if risk_type == 'initial':
         impact_col = 'Initial risk_Value'
@@ -360,6 +524,145 @@ def create_tornado_chart(df, top_n=15):
     
     return fig
 
+def perform_sensitivity_analysis(df, n_simulations=10000):
+    """
+    Enhanced sensitivity analysis with variance contribution
+    Shows which risks drive the most uncertainty in total exposure
+    """
+    # Baseline simulation
+    baseline_results, _ = run_monte_carlo(df, n_simulations, 'initial')
+    baseline_variance = np.var(baseline_results)
+    baseline_mean = np.mean(baseline_results)
+    
+    # Calculate contribution of each risk to total variance
+    risk_contributions = []
+    
+    for idx, risk in df.iterrows():
+        # Create modified dataframe with this risk set to zero probability
+        df_modified = df.copy()
+        df_modified.loc[idx, 'Initial_Likelihood'] = 0
+        
+        # Run simulation without this risk
+        modified_results, _ = run_monte_carlo(df_modified, n_simulations, 'initial')
+        modified_variance = np.var(modified_results)
+        modified_mean = np.mean(modified_results)
+        
+        # Calculate variance reduction and mean impact
+        variance_contribution = baseline_variance - modified_variance
+        mean_contribution = baseline_mean - modified_mean
+        
+        risk_contributions.append({
+            'Risk ID': risk['Risk ID'],
+            'Risk Description': risk['Risk Description'],
+            'Variance Contribution': variance_contribution,
+            'Variance %': (variance_contribution / baseline_variance * 100) if baseline_variance > 0 else 0,
+            'Mean Contribution': mean_contribution,
+            'Expected Value': risk['Initial risk_Value'] * risk['Initial_Likelihood']
+        })
+    
+    # Create DataFrame and sort by variance contribution
+    sensitivity_df = pd.DataFrame(risk_contributions)
+    sensitivity_df = sensitivity_df.sort_values('Variance Contribution', ascending=False)
+    
+    # Calculate cumulative percentage (Pareto)
+    sensitivity_df['Cumulative %'] = sensitivity_df['Variance %'].cumsum()
+    
+    return sensitivity_df
+
+def create_enhanced_tornado_chart(sensitivity_df, top_n=15):
+    """Create enhanced tornado chart showing variance contribution"""
+    # Take top N risks
+    df_plot = sensitivity_df.head(top_n).copy()
+    
+    # Sort by variance contribution for display
+    df_plot = df_plot.sort_values('Variance Contribution')
+    
+    # Create figure with secondary y-axis for cumulative %
+    fig = make_subplots(
+        rows=1, cols=1,
+        specs=[[{"secondary_y": False}]]
+    )
+    
+    # Add variance contribution bars
+    fig.add_trace(
+        go.Bar(
+            y=df_plot['Risk Description'],
+            x=df_plot['Variance %'],
+            orientation='h',
+            name='Variance Contribution',
+            marker=dict(
+                color=df_plot['Variance %'],
+                colorscale='Reds',
+                showscale=True,
+                colorbar=dict(title="Variance %")
+            ),
+            text=df_plot['Variance %'].apply(lambda x: f'{x:.1f}%'),
+            textposition='outside',
+            hovertemplate='<b>%{y}</b><br>Variance Contribution: %{x:.2f}%<br>Mean Impact: %{customdata:.2f}M CHF<extra></extra>',
+            customdata=df_plot['Mean Contribution'] / 1e6
+        )
+    )
+    
+    fig.update_layout(
+        title=f'Sensitivity Analysis - Top {top_n} Risks by Variance Contribution<br><sub>Shows which risks drive the most uncertainty in total exposure</sub>',
+        xaxis_title='Contribution to Total Variance (%)',
+        yaxis_title='',
+        height=600,
+        showlegend=False
+    )
+    
+    return fig
+
+def create_pareto_chart(sensitivity_df, top_n=20):
+    """Create Pareto chart showing cumulative variance contribution"""
+    df_plot = sensitivity_df.head(top_n).copy()
+    
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Add bars for individual variance contribution
+    fig.add_trace(
+        go.Bar(
+            x=df_plot['Risk Description'],
+            y=df_plot['Variance %'],
+            name='Variance Contribution',
+            marker_color='indianred',
+            hovertemplate='<b>%{x}</b><br>Variance: %{y:.2f}%<extra></extra>'
+        ),
+        secondary_y=False
+    )
+    
+    # Add line for cumulative percentage
+    fig.add_trace(
+        go.Scatter(
+            x=df_plot['Risk Description'],
+            y=df_plot['Cumulative %'],
+            name='Cumulative %',
+            line=dict(color='navy', width=3),
+            marker=dict(size=8),
+            hovertemplate='<b>%{x}</b><br>Cumulative: %{y:.1f}%<extra></extra>'
+        ),
+        secondary_y=True
+    )
+    
+    # Add 80% reference line
+    fig.add_hline(y=80, line_dash="dash", line_color="green", 
+                  annotation_text="80% threshold", 
+                  secondary_y=True)
+    
+    # Update axes
+    fig.update_xaxes(title_text="Risks", tickangle=-45)
+    fig.update_yaxes(title_text="Individual Variance Contribution (%)", secondary_y=False)
+    fig.update_yaxes(title_text="Cumulative Variance Contribution (%)", secondary_y=True, range=[0, 105])
+    
+    fig.update_layout(
+        title='Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
+        height=600,
+        hovermode='x unified',
+        showlegend=True
+    )
+    
+    return fig
+
 # Main application
 def main():
     # Sidebar
@@ -411,6 +714,10 @@ def main():
             # Calculate mitigation ROI
             df_with_roi = calculate_mitigation_roi(df)
             
+            # Perform enhanced sensitivity analysis
+            st.write("Performing sensitivity analysis...")
+            sensitivity_df = perform_sensitivity_analysis(df, n_simulations)
+            
             # Store in session state
             st.session_state['initial_results'] = initial_results
             st.session_state['residual_results'] = residual_results
@@ -418,6 +725,7 @@ def main():
             st.session_state['residual_stats'] = residual_stats
             st.session_state['df'] = df
             st.session_state['df_with_roi'] = df_with_roi
+            st.session_state['sensitivity_df'] = sensitivity_df
             st.session_state['simulation_run'] = True
             
         st.sidebar.success("✅ Simulation completed!")
@@ -432,9 +740,10 @@ def main():
         df_with_roi = st.session_state['df_with_roi']
         
         # Create tabs
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📊 Dashboard", 
-            "📈 Risk Matrix", 
+            "📈 Risk Matrix & Heatmap", 
+            "🔍 Sensitivity Analysis",
             "🎲 Monte Carlo Results",
             "💰 Cost-Benefit Analysis",
             "📋 Risk Register",
@@ -500,21 +809,182 @@ def main():
             st.dataframe(stats_df, use_container_width=True, hide_index=True)
         
         with tab2:
-            st.header("Interactive Risk Matrix")
+            st.header("Risk Visualization - Matrix, Heatmap & Bubble Charts")
+            
+            # Add view selector
+            view_type = st.radio(
+                "Select Visualization Type:",
+                ["Risk Matrix (Scatter)", "Risk Heatmap (Grid)", "Risk Bubble Chart"],
+                horizontal=True
+            )
             
             col1, col2 = st.columns(2)
             
-            with col1:
-                st.subheader("Initial Risk Matrix")
-                initial_matrix = create_risk_matrix(df, 'initial')
-                st.plotly_chart(initial_matrix, use_container_width=True)
+            if view_type == "Risk Matrix (Scatter)":
+                with col1:
+                    st.subheader("Initial Risk Matrix")
+                    initial_matrix = create_risk_matrix(df, 'initial')
+                    st.plotly_chart(initial_matrix, use_container_width=True)
+                
+                with col2:
+                    st.subheader("Residual Risk Matrix")
+                    residual_matrix = create_risk_matrix(df, 'residual')
+                    st.plotly_chart(residual_matrix, use_container_width=True)
             
-            with col2:
-                st.subheader("Residual Risk Matrix")
-                residual_matrix = create_risk_matrix(df, 'residual')
-                st.plotly_chart(residual_matrix, use_container_width=True)
+            elif view_type == "Risk Heatmap (Grid)":
+                with col1:
+                    st.subheader("Initial Risk Heatmap")
+                    st.info("📊 Shows concentration and total value of risks in each likelihood-impact cell")
+                    initial_heatmap = create_risk_heatmap(df, 'initial')
+                    st.plotly_chart(initial_heatmap, use_container_width=True)
+                
+                with col2:
+                    st.subheader("Residual Risk Heatmap")
+                    st.info("📊 Shows risk concentration after mitigation measures")
+                    residual_heatmap = create_risk_heatmap(df, 'residual')
+                    st.plotly_chart(residual_heatmap, use_container_width=True)
+                
+                # Add summary statistics
+                st.markdown("---")
+                st.subheader("Heatmap Insights")
+                
+                # Calculate high-risk quadrant
+                high_impact_high_prob_initial = df[(np.abs(df['Initial risk_Value']) > 1e6) & 
+                                                    (df['Initial_Likelihood'] > 0.25)].shape[0]
+                high_impact_high_prob_residual = df[(np.abs(df['Residual risk_Value']) > 1e6) & 
+                                                     (df['Residual_Likelihood'] > 0.25)].shape[0]
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("High-Risk Quadrant (Initial)", 
+                             high_impact_high_prob_initial,
+                             help="Risks with impact >1M CHF and likelihood >25%")
+                with col2:
+                    st.metric("High-Risk Quadrant (Residual)", 
+                             high_impact_high_prob_residual,
+                             delta=high_impact_high_prob_residual - high_impact_high_prob_initial)
+                with col3:
+                    reduction = ((high_impact_high_prob_initial - high_impact_high_prob_residual) / 
+                                high_impact_high_prob_initial * 100) if high_impact_high_prob_initial > 0 else 0
+                    st.metric("High-Risk Reduction", f"{reduction:.1f}%")
+            
+            else:  # Bubble Chart
+                with col1:
+                    st.subheader("Initial Risk Bubble Chart")
+                    st.info("📊 Bubble size represents expected value of each risk")
+                    initial_bubble = create_risk_bubble_chart(df, 'initial')
+                    st.plotly_chart(initial_bubble, use_container_width=True)
+                
+                with col2:
+                    st.subheader("Residual Risk Bubble Chart")
+                    st.info("📊 Shows risk positioning after mitigation")
+                    residual_bubble = create_risk_bubble_chart(df, 'residual')
+                    st.plotly_chart(residual_bubble, use_container_width=True)
         
         with tab3:
+            st.header("Enhanced Sensitivity Analysis")
+            
+            st.info("""
+            🔍 **Sensitivity Analysis** identifies which risks contribute most to overall portfolio uncertainty.
+            This helps prioritize risk management efforts on the risks that matter most.
+            """)
+            
+            # Get sensitivity data
+            sensitivity_df = st.session_state['sensitivity_df']
+            
+            # Key insights
+            st.subheader("Key Findings")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            # Top risk by variance
+            top_risk = sensitivity_df.iloc[0]
+            with col1:
+                st.metric(
+                    "Top Risk Driver",
+                    f"Risk {top_risk['Risk ID']}",
+                    f"{top_risk['Variance %']:.1f}% of variance"
+                )
+            
+            # Number of risks for 80% variance
+            risks_80 = (sensitivity_df['Cumulative %'] <= 80).sum()
+            with col2:
+                st.metric(
+                    "Risks Driving 80% Variance",
+                    f"{risks_80} risks",
+                    f"{risks_80/len(df)*100:.1f}% of total"
+                )
+            
+            # Total variance of top 5
+            top5_variance = sensitivity_df.head(5)['Variance %'].sum()
+            with col3:
+                st.metric(
+                    "Top 5 Risks Contribution",
+                    f"{top5_variance:.1f}%",
+                    "of total variance"
+                )
+            
+            st.markdown("---")
+            
+            # Enhanced Tornado Chart
+            st.subheader("Variance Contribution (Tornado Chart)")
+            tornado_enhanced = create_enhanced_tornado_chart(sensitivity_df, top_n=15)
+            st.plotly_chart(tornado_enhanced, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Pareto Chart
+            st.subheader("Pareto Analysis (80/20 Rule)")
+            st.write("""
+            The **Pareto principle** suggests that roughly 80% of effects come from 20% of causes.
+            This chart identifies the "vital few" risks that drive most of the uncertainty.
+            """)
+            pareto_chart = create_pareto_chart(sensitivity_df, top_n=20)
+            st.plotly_chart(pareto_chart, use_container_width=True)
+            
+            # Find 80% threshold
+            risks_for_80 = sensitivity_df[sensitivity_df['Cumulative %'] <= 80]
+            st.success(f"""
+            📊 **Pareto Insight**: {len(risks_for_80)} risks ({len(risks_for_80)/len(df)*100:.1f}% of total) 
+            account for 80% of the portfolio variance.
+            
+            **Recommendation**: Focus intensive risk management efforts on these {len(risks_for_80)} critical risks.
+            """)
+            
+            st.markdown("---")
+            
+            # Detailed sensitivity table
+            st.subheader("Detailed Sensitivity Analysis")
+            
+            # Prepare display dataframe
+            display_sensitivity = sensitivity_df[['Risk ID', 'Risk Description', 'Variance %', 
+                                                   'Cumulative %', 'Mean Contribution', 'Expected Value']].copy()
+            display_sensitivity['Mean Contribution (M CHF)'] = (display_sensitivity['Mean Contribution'] / 1e6).round(2)
+            display_sensitivity['Expected Value (M CHF)'] = (display_sensitivity['Expected Value'] / 1e6).round(2)
+            display_sensitivity['Variance %'] = display_sensitivity['Variance %'].round(2)
+            display_sensitivity['Cumulative %'] = display_sensitivity['Cumulative %'].round(1)
+            
+            display_sensitivity = display_sensitivity[['Risk ID', 'Risk Description', 'Variance %', 
+                                                       'Cumulative %', 'Mean Contribution (M CHF)', 
+                                                       'Expected Value (M CHF)']]
+            
+            st.dataframe(
+                display_sensitivity,
+                use_container_width=True,
+                height=400,
+                hide_index=True
+            )
+            
+            # Export sensitivity analysis
+            csv_sensitivity = display_sensitivity.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Sensitivity Analysis (CSV)",
+                data=csv_sensitivity,
+                file_name=f"sensitivity_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        
+        with tab4:
             st.header("Monte Carlo Simulation Results")
             
             st.info(f"📊 Performed {n_simulations:,} simulations to model probabilistic risk exposure")
@@ -550,7 +1020,7 @@ def main():
                 cdf_residual = create_cdf_plot(residual_results, residual_stats, 'residual')
                 st.plotly_chart(cdf_residual, use_container_width=True)
         
-        with tab4:
+        with tab5:
             st.header("Mitigation Cost-Benefit Analysis")
             
             # Filter risks with mitigation measures
@@ -639,7 +1109,7 @@ def main():
             else:
                 st.warning("No risks with mitigation measures found in the register.")
         
-        with tab5:
+        with tab6:
             st.header("Risk Register")
             
             # Add filters
@@ -695,7 +1165,7 @@ def main():
             
             st.dataframe(display_df, use_container_width=True, hide_index=True, height=600)
         
-        with tab6:
+        with tab7:
             st.header("Export Results")
             
             st.write("Download your risk assessment results in various formats:")
