@@ -667,7 +667,7 @@ def create_pareto_chart(sensitivity_df, top_n=20):
 
     fig.update_layout(
         title='Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
-        height=600,
+        height=800,  # Increased height for better vertical space
         hovermode='x unified',
         showlegend=True,
         legend=dict(
@@ -676,7 +676,8 @@ def create_pareto_chart(sensitivity_df, top_n=20):
             y=1.02,
             xanchor="right",
             x=1
-        )
+        ),
+        margin=dict(l=80, r=80, t=120, b=100)  # Added margins for better spacing
     )
 
     return fig
