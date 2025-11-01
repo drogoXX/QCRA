@@ -619,23 +619,23 @@ def create_pareto_chart(sensitivity_df, top_n=20):
     """Create Pareto chart showing cumulative variance contribution"""
     df_plot = sensitivity_df.head(top_n).copy()
 
-    # Full text for hover
-    df_plot['hover_text'] = df_plot.apply(
-        lambda row: f"<b>{row['Risk ID']}</b>: {row['Risk Description']}", axis=1
+    # Truncate long risk descriptions for x-axis labels (keep full text in hover)
+    max_label_length = 25
+    df_plot['Short Label'] = df_plot['Risk Description'].apply(
+        lambda x: x[:max_label_length] + '...' if len(x) > max_label_length else x
     )
 
-    # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Add vertical bars for individual variance contribution
+    # Add bars for individual variance contribution
     fig.add_trace(
         go.Bar(
-            x=df_plot['Risk ID'],
+            x=df_plot['Short Label'],
             y=df_plot['Variance %'],
             name='Variance Contribution',
             marker_color='indianred',
-            customdata=df_plot['hover_text'],
-            hovertemplate='%{customdata}<br>Variance: %{y:.2f}%<extra></extra>'
+            customdata=df_plot['Risk Description'],
+            hovertemplate='<b>%{customdata}</b><br>Variance: %{y:.2f}%<extra></extra>'
         ),
         secondary_y=False
     )
@@ -643,14 +643,13 @@ def create_pareto_chart(sensitivity_df, top_n=20):
     # Add line for cumulative percentage
     fig.add_trace(
         go.Scatter(
-            x=df_plot['Risk ID'],
+            x=df_plot['Short Label'],
             y=df_plot['Cumulative %'],
             name='Cumulative %',
-            mode='lines+markers',
             line=dict(color='navy', width=3),
-            marker=dict(size=8, symbol='diamond'),
-            customdata=df_plot['hover_text'],
-            hovertemplate='%{customdata}<br>Cumulative: %{y:.1f}%<extra></extra>'
+            marker=dict(size=8),
+            customdata=df_plot['Risk Description'],
+            hovertemplate='<b>%{customdata}</b><br>Cumulative: %{y:.1f}%<extra></extra>'
         ),
         secondary_y=True
     )
@@ -661,7 +660,7 @@ def create_pareto_chart(sensitivity_df, top_n=20):
                   secondary_y=True)
 
     # Update axes
-    fig.update_xaxes(title_text="Risk ID")
+    fig.update_xaxes(title_text="Risks", tickangle=-45)
     fig.update_yaxes(title_text="Individual Variance Contribution (%)", secondary_y=False)
     fig.update_yaxes(title_text="Cumulative Variance Contribution (%)", secondary_y=True, range=[0, 105])
 
@@ -670,14 +669,7 @@ def create_pareto_chart(sensitivity_df, top_n=20):
         height=800,  # Increased height for better vertical space
         hovermode='x unified',
         showlegend=True,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
-        margin=dict(l=80, r=80, t=120, b=100)  # Added margins for better spacing
+        margin=dict(b=150)  # Increase bottom margin for rotated labels
     )
 
     return fig
