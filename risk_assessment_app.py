@@ -306,6 +306,8 @@ def create_risk_bubble_chart(df, risk_type='initial'):
     fig.update_layout(height=700, showlegend=True)
     
     return fig
+
+def create_risk_matrix(df, risk_type='initial'):
     """Create interactive risk matrix"""
     if risk_type == 'initial':
         impact_col = 'Initial risk_Value'
