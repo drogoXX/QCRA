@@ -627,101 +627,49 @@ def create_pareto_chart(sensitivity_df, top_n=20):
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Add bars for individual variance contribution (distinct color)
+    # Add bars for individual variance contribution
     fig.add_trace(
         go.Bar(
             x=df_plot['Short Label'],
             y=df_plot['Variance %'],
             name='Variance Contribution',
-            marker_color='#E74C3C',  # More distinct red color
+            marker_color='indianred',
             customdata=df_plot['Risk Description'],
             hovertemplate='<b>%{customdata}</b><br>Variance: %{y:.2f}%<extra></extra>'
         ),
         secondary_y=False
     )
 
-    # Add line for cumulative percentage (more visible)
+    # Add line for cumulative percentage
     fig.add_trace(
         go.Scatter(
             x=df_plot['Short Label'],
             y=df_plot['Cumulative %'],
             name='Cumulative %',
-            mode='lines+markers',
-            line=dict(color='#2C3E50', width=4),  # Darker, thicker line
-            marker=dict(size=10, symbol='diamond', color='#2C3E50'),
+            line=dict(color='navy', width=3),
+            marker=dict(size=8),
             customdata=df_plot['Risk Description'],
             hovertemplate='<b>%{customdata}</b><br>Cumulative: %{y:.1f}%<extra></extra>'
         ),
         secondary_y=True
     )
 
-    # Add 80% reference line (more clearly visible)
-    fig.add_hline(
-        y=80,
-        line_dash="dash",
-        line_color="#27AE60",  # Distinct green color
-        line_width=3,
-        annotation_text="80% threshold",
-        annotation_position="right",
-        annotation=dict(
-            font=dict(size=12, color="#27AE60"),
-            bgcolor="white",
-            bordercolor="#27AE60",
-            borderwidth=1,
-            borderpad=4
-        ),
-        secondary_y=True
-    )
+    # Add 80% reference line
+    fig.add_hline(y=80, line_dash="dash", line_color="green",
+                  annotation_text="80% threshold",
+                  secondary_y=True)
 
-    # Update x-axis with 45-degree rotation and clear font
-    fig.update_xaxes(
-        title_text="Risks",
-        tickangle=-45,  # Rotate labels 45 degrees
-        tickfont=dict(size=10),  # Clear font size
-        title_font=dict(size=12)
-    )
+    # Update axes
+    fig.update_xaxes(title_text="Risks", tickangle=-45)
+    fig.update_yaxes(title_text="Individual Variance Contribution (%)", secondary_y=False)
+    fig.update_yaxes(title_text="Cumulative Variance Contribution (%)", secondary_y=True, range=[0, 105])
 
-    # Update y-axes with gridlines and font sizing
-    fig.update_yaxes(
-        title_text="Individual Variance Contribution (%)",
-        secondary_y=False,
-        showgrid=True,  # Add subtle gridlines
-        gridwidth=1,
-        gridcolor='rgba(128, 128, 128, 0.2)',  # Subtle gray
-        tickfont=dict(size=10),
-        title_font=dict(size=12)
-    )
-    fig.update_yaxes(
-        title_text="Cumulative Variance Contribution (%)",
-        secondary_y=True,
-        range=[0, 105],
-        showgrid=False,  # No gridlines on secondary axis
-        tickfont=dict(size=10),
-        title_font=dict(size=12)
-    )
-
-    # Update layout with increased size and better margins
     fig.update_layout(
-        title={
-            'text': 'Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
-            'font': {'size': 16}
-        },
-        width=1344,  # 14 inches * 96 DPI
-        height=800,  # Increased height for better vertical space
+        title='Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
+        height=600,
         hovermode='x unified',
         showlegend=True,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-            font=dict(size=11)
-        ),
-        margin=dict(l=100, r=100, t=140, b=150),  # Increased bottom margin for rotated labels
-        font=dict(size=10),  # Base font size
-        plot_bgcolor='white',
-        paper_bgcolor='white'
+        margin=dict(b=150)  # Increase bottom margin for rotated labels
     )
 
     return fig
