@@ -640,10 +640,10 @@ def create_pareto_chart(sensitivity_df, top_n=20):
         lambda row: f"<b>{row['Risk ID']}</b>: {row['Risk Description']}", axis=1
     )
 
-    # Create figure WITHOUT secondary y-axis (both use same 0-100% scale)
-    fig = go.Figure()
+    # Create figure WITH secondary y-axis (bars auto-scaled, cumulative 0-100%)
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Add bars for individual variance contribution
+    # Add bars for individual variance contribution on PRIMARY y-axis (auto-scaled)
     fig.add_trace(
         go.Bar(
             x=df_plot['Risk ID'],  # Use Risk IDs only for clean x-axis
@@ -651,12 +651,12 @@ def create_pareto_chart(sensitivity_df, top_n=20):
             name='Individual Variance %',
             marker_color='#E74C3C',  # Vibrant red
             customdata=df_plot['hover_text'],
-            hovertemplate='%{customdata}<br>Individual Variance: %{y:.2f}%<extra></extra>',
-            yaxis='y'
-        )
+            hovertemplate='%{customdata}<br>Individual Variance: %{y:.2f}%<extra></extra>'
+        ),
+        secondary_y=False
     )
 
-    # Add line for cumulative percentage (on SAME axis)
+    # Add line for cumulative percentage on SECONDARY y-axis (0-100% scale)
     fig.add_trace(
         go.Scatter(
             x=df_plot['Risk ID'],  # Use Risk IDs only
@@ -666,26 +666,27 @@ def create_pareto_chart(sensitivity_df, top_n=20):
             line=dict(color='#2C3E50', width=4),  # Dark slate, thick line
             marker=dict(size=10, symbol='diamond', color='#2C3E50'),
             customdata=df_plot['hover_text'],
-            hovertemplate='%{customdata}<br>Cumulative: %{y:.1f}%<extra></extra>',
-            yaxis='y'
-        )
+            hovertemplate='%{customdata}<br>Cumulative: %{y:.1f}%<extra></extra>'
+        ),
+        secondary_y=True
     )
 
-    # Add 80% reference line (highly visible)
+    # Add 80% reference line (on secondary y-axis)
     fig.add_hline(
         y=80,
         line_dash="dash",
         line_color="#27AE60",  # Bright green
         line_width=4,  # Thicker for prominence
-        annotation_text="80% Threshold (Pareto Rule)",
+        annotation_text="80% Threshold",
         annotation_position="right",
         annotation=dict(
-            font=dict(size=13, color="#27AE60", family="Arial Black"),
+            font=dict(size=12, color="#27AE60"),
             bgcolor="rgba(255, 255, 255, 0.9)",
             bordercolor="#27AE60",
             borderwidth=2,
-            borderpad=6
-        )
+            borderpad=4
+        ),
+        secondary_y=True
     )
 
     # Update x-axis with 45-degree rotation
@@ -693,25 +694,35 @@ def create_pareto_chart(sensitivity_df, top_n=20):
         title_text="Risk ID",
         tickangle=-45,  # Rotate labels 45 degrees
         tickfont=dict(size=11),
-        title_font=dict(size=13, family="Arial")
+        title_font=dict(size=12)
     )
 
-    # Update y-axis - SINGLE AXIS 0-100% for both bars and line
+    # Update PRIMARY y-axis (left) - Individual variance (auto-scaled)
     fig.update_yaxes(
-        title_text="Variance Contribution (%)",
-        range=[0, 100],  # Fixed 0-100% scale
+        title_text="Individual Variance Contribution (%)",
+        secondary_y=False,
         showgrid=True,  # Subtle gridlines
         gridwidth=1,
         gridcolor='rgba(128, 128, 128, 0.2)',
         tickfont=dict(size=11),
-        title_font=dict(size=13, family="Arial")
+        title_font=dict(size=12)
+    )
+
+    # Update SECONDARY y-axis (right) - Cumulative % (0-100% fixed scale)
+    fig.update_yaxes(
+        title_text="Cumulative Variance Contribution (%)",
+        secondary_y=True,
+        range=[0, 100],  # Fixed 0-100% scale for cumulative
+        showgrid=False,  # No gridlines on secondary axis
+        tickfont=dict(size=11),
+        title_font=dict(size=12)
     )
 
     # Update layout with proper dimensions and margins
     fig.update_layout(
         title={
-            'text': 'Pareto Analysis - Risk Variance Contribution<br><sub>Both bars and line use the same 0-100% scale for visual alignment</sub>',
-            'font': {'size': 17, 'family': 'Arial'}
+            'text': 'Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
+            'font': {'size': 16}
         },
         width=1400,  # Increased width for better spacing
         height=700,  # Good height for readability
@@ -723,10 +734,10 @@ def create_pareto_chart(sensitivity_df, top_n=20):
             y=1.02,
             xanchor="center",
             x=0.5,
-            font=dict(size=12)
+            font=dict(size=11)
         ),
-        margin=dict(l=80, r=120, t=140, b=120),  # Proper margins for rotated labels and annotations
-        font=dict(size=11, family="Arial"),
+        margin=dict(l=80, r=80, t=120, b=120),  # Proper margins for rotated labels
+        font=dict(size=11),
         plot_bgcolor='white',
         paper_bgcolor='white'
     )
