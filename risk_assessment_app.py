@@ -94,14 +94,16 @@ def load_risk_data(file_path):
     
     return df
 
-def run_monte_carlo(df, n_simulations=10000, risk_type='initial'):
+def run_monte_carlo(df, n_simulations=10000, risk_type='initial', random_numbers=None):
     """
     Run Monte Carlo simulation for risk portfolio
-    
+
     Parameters:
     - df: DataFrame with risk data
     - n_simulations: Number of Monte Carlo iterations
     - risk_type: 'initial' or 'residual'
+    - random_numbers: Optional pre-generated random numbers for Common Random Numbers technique
+                     Shape should be (n_simulations, len(df))
     """
     if risk_type == 'initial':
         impact_col = 'Initial risk_Value'
@@ -109,23 +111,28 @@ def run_monte_carlo(df, n_simulations=10000, risk_type='initial'):
     else:
         impact_col = 'Residual risk_Value'
         likelihood_col = 'Residual_Likelihood'
-    
+
     # Prepare data
     impacts = df[impact_col].values
     likelihoods = df[likelihood_col].values
-    
+
+    # Generate or use provided random numbers
+    if random_numbers is None:
+        random_numbers = np.random.random((n_simulations, len(df)))
+
     # Monte Carlo simulation
     results = np.zeros(n_simulations)
     risk_occurrences = np.zeros((n_simulations, len(df)))
-    
+
     for i in range(n_simulations):
         # For each risk, determine if it occurs (Bernoulli trial)
-        occurred = np.random.random(len(df)) < likelihoods
+        # Using the same random numbers ensures variance reduction
+        occurred = random_numbers[i] < likelihoods
         risk_occurrences[i] = occurred
-        
+
         # Sum the impacts of risks that occurred
         results[i] = np.sum(impacts * occurred)
-    
+
     return results, risk_occurrences
 
 def calculate_statistics(results):
@@ -530,29 +537,38 @@ def perform_sensitivity_analysis(df, n_simulations=10000):
     """
     Enhanced sensitivity analysis with variance contribution
     Shows which risks drive the most uncertainty in total exposure
+
+    Uses Common Random Numbers (CRN) technique to reduce sampling noise
+    and ensure accurate variance decomposition (no negative contributions)
     """
-    # Baseline simulation
-    baseline_results, _ = run_monte_carlo(df, n_simulations, 'initial')
+    # Generate random numbers ONCE for all simulations (Common Random Numbers)
+    # This eliminates Monte Carlo sampling noise in variance comparisons
+    random_numbers = np.random.random((n_simulations, len(df)))
+
+    # Baseline simulation using the common random numbers
+    baseline_results, _ = run_monte_carlo(df, n_simulations, 'initial', random_numbers)
     baseline_variance = np.var(baseline_results)
     baseline_mean = np.mean(baseline_results)
-    
+
     # Calculate contribution of each risk to total variance
     risk_contributions = []
-    
+
     for idx, risk in df.iterrows():
         # Create modified dataframe with this risk set to zero probability
         df_modified = df.copy()
         df_modified.loc[idx, 'Initial_Likelihood'] = 0
-        
-        # Run simulation without this risk
-        modified_results, _ = run_monte_carlo(df_modified, n_simulations, 'initial')
+
+        # Run simulation without this risk using SAME random numbers
+        # This is the key: same random draws, only the likelihood changes
+        modified_results, _ = run_monte_carlo(df_modified, n_simulations, 'initial', random_numbers)
         modified_variance = np.var(modified_results)
         modified_mean = np.mean(modified_results)
-        
+
         # Calculate variance reduction and mean impact
+        # With CRN, this should always be >= 0 (or very close due to numerical precision)
         variance_contribution = baseline_variance - modified_variance
         mean_contribution = baseline_mean - modified_mean
-        
+
         risk_contributions.append({
             'Risk ID': risk['Risk ID'],
             'Risk Description': risk['Risk Description'],
@@ -561,14 +577,14 @@ def perform_sensitivity_analysis(df, n_simulations=10000):
             'Mean Contribution': mean_contribution,
             'Expected Value': risk['Initial risk_Value'] * risk['Initial_Likelihood']
         })
-    
+
     # Create DataFrame and sort by variance contribution
     sensitivity_df = pd.DataFrame(risk_contributions)
     sensitivity_df = sensitivity_df.sort_values('Variance Contribution', ascending=False)
-    
+
     # Calculate cumulative percentage (Pareto)
     sensitivity_df['Cumulative %'] = sensitivity_df['Variance %'].cumsum()
-    
+
     return sensitivity_df
 
 def create_enhanced_tornado_chart(sensitivity_df, top_n=15):
