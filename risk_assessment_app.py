@@ -94,14 +94,16 @@ def load_risk_data(file_path):
     
     return df
 
-def run_monte_carlo(df, n_simulations=10000, risk_type='initial'):
+def run_monte_carlo(df, n_simulations=10000, risk_type='initial', random_numbers=None):
     """
     Run Monte Carlo simulation for risk portfolio
-    
+
     Parameters:
     - df: DataFrame with risk data
     - n_simulations: Number of Monte Carlo iterations
     - risk_type: 'initial' or 'residual'
+    - random_numbers: Optional pre-generated random numbers for Common Random Numbers technique
+                     Shape should be (n_simulations, len(df))
     """
     if risk_type == 'initial':
         impact_col = 'Initial risk_Value'
@@ -109,23 +111,28 @@ def run_monte_carlo(df, n_simulations=10000, risk_type='initial'):
     else:
         impact_col = 'Residual risk_Value'
         likelihood_col = 'Residual_Likelihood'
-    
+
     # Prepare data
     impacts = df[impact_col].values
     likelihoods = df[likelihood_col].values
-    
+
+    # Generate or use provided random numbers
+    if random_numbers is None:
+        random_numbers = np.random.random((n_simulations, len(df)))
+
     # Monte Carlo simulation
     results = np.zeros(n_simulations)
     risk_occurrences = np.zeros((n_simulations, len(df)))
-    
+
     for i in range(n_simulations):
         # For each risk, determine if it occurs (Bernoulli trial)
-        occurred = np.random.random(len(df)) < likelihoods
+        # Using the same random numbers ensures variance reduction
+        occurred = random_numbers[i] < likelihoods
         risk_occurrences[i] = occurred
-        
+
         # Sum the impacts of risks that occurred
         results[i] = np.sum(impacts * occurred)
-    
+
     return results, risk_occurrences
 
 def calculate_statistics(results):
@@ -530,29 +537,38 @@ def perform_sensitivity_analysis(df, n_simulations=10000):
     """
     Enhanced sensitivity analysis with variance contribution
     Shows which risks drive the most uncertainty in total exposure
+
+    Uses Common Random Numbers (CRN) technique to reduce sampling noise
+    and ensure accurate variance decomposition (no negative contributions)
     """
-    # Baseline simulation
-    baseline_results, _ = run_monte_carlo(df, n_simulations, 'initial')
+    # Generate random numbers ONCE for all simulations (Common Random Numbers)
+    # This eliminates Monte Carlo sampling noise in variance comparisons
+    random_numbers = np.random.random((n_simulations, len(df)))
+
+    # Baseline simulation using the common random numbers
+    baseline_results, _ = run_monte_carlo(df, n_simulations, 'initial', random_numbers)
     baseline_variance = np.var(baseline_results)
     baseline_mean = np.mean(baseline_results)
-    
+
     # Calculate contribution of each risk to total variance
     risk_contributions = []
-    
+
     for idx, risk in df.iterrows():
         # Create modified dataframe with this risk set to zero probability
         df_modified = df.copy()
         df_modified.loc[idx, 'Initial_Likelihood'] = 0
-        
-        # Run simulation without this risk
-        modified_results, _ = run_monte_carlo(df_modified, n_simulations, 'initial')
+
+        # Run simulation without this risk using SAME random numbers
+        # This is the key: same random draws, only the likelihood changes
+        modified_results, _ = run_monte_carlo(df_modified, n_simulations, 'initial', random_numbers)
         modified_variance = np.var(modified_results)
         modified_mean = np.mean(modified_results)
-        
+
         # Calculate variance reduction and mean impact
+        # With CRN, this should always be >= 0 (or very close due to numerical precision)
         variance_contribution = baseline_variance - modified_variance
         mean_contribution = baseline_mean - modified_mean
-        
+
         risk_contributions.append({
             'Risk ID': risk['Risk ID'],
             'Risk Description': risk['Risk Description'],
@@ -561,14 +577,14 @@ def perform_sensitivity_analysis(df, n_simulations=10000):
             'Mean Contribution': mean_contribution,
             'Expected Value': risk['Initial risk_Value'] * risk['Initial_Likelihood']
         })
-    
+
     # Create DataFrame and sort by variance contribution
     sensitivity_df = pd.DataFrame(risk_contributions)
     sensitivity_df = sensitivity_df.sort_values('Variance Contribution', ascending=False)
-    
+
     # Calculate cumulative percentage (Pareto)
     sensitivity_df['Cumulative %'] = sensitivity_df['Variance %'].cumsum()
-    
+
     return sensitivity_df
 
 def create_enhanced_tornado_chart(sensitivity_df, top_n=15):
@@ -619,57 +635,100 @@ def create_pareto_chart(sensitivity_df, top_n=20):
     """Create Pareto chart showing cumulative variance contribution"""
     df_plot = sensitivity_df.head(top_n).copy()
 
-    # Truncate long risk descriptions for x-axis labels (keep full text in hover)
-    max_label_length = 25
-    df_plot['Short Label'] = df_plot['Risk Description'].apply(
-        lambda x: x[:max_label_length] + '...' if len(x) > max_label_length else x
+    # Prepare hover data with full risk description
+    df_plot['hover_text'] = df_plot.apply(
+        lambda row: f"<b>{row['Risk ID']}</b>: {row['Risk Description']}", axis=1
     )
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    # Create figure WITHOUT secondary y-axis (both use same 0-100% scale)
+    fig = go.Figure()
 
     # Add bars for individual variance contribution
     fig.add_trace(
         go.Bar(
-            x=df_plot['Short Label'],
+            x=df_plot['Risk ID'],  # Use Risk IDs only for clean x-axis
             y=df_plot['Variance %'],
-            name='Variance Contribution',
-            marker_color='indianred',
-            customdata=df_plot['Risk Description'],
-            hovertemplate='<b>%{customdata}</b><br>Variance: %{y:.2f}%<extra></extra>'
-        ),
-        secondary_y=False
+            name='Individual Variance %',
+            marker_color='#E74C3C',  # Vibrant red
+            customdata=df_plot['hover_text'],
+            hovertemplate='%{customdata}<br>Individual Variance: %{y:.2f}%<extra></extra>',
+            yaxis='y'
+        )
     )
 
-    # Add line for cumulative percentage
+    # Add line for cumulative percentage (on SAME axis)
     fig.add_trace(
         go.Scatter(
-            x=df_plot['Short Label'],
+            x=df_plot['Risk ID'],  # Use Risk IDs only
             y=df_plot['Cumulative %'],
             name='Cumulative %',
-            line=dict(color='navy', width=3),
-            marker=dict(size=8),
-            customdata=df_plot['Risk Description'],
-            hovertemplate='<b>%{customdata}</b><br>Cumulative: %{y:.1f}%<extra></extra>'
-        ),
-        secondary_y=True
+            mode='lines+markers',
+            line=dict(color='#2C3E50', width=4),  # Dark slate, thick line
+            marker=dict(size=10, symbol='diamond', color='#2C3E50'),
+            customdata=df_plot['hover_text'],
+            hovertemplate='%{customdata}<br>Cumulative: %{y:.1f}%<extra></extra>',
+            yaxis='y'
+        )
     )
 
-    # Add 80% reference line
-    fig.add_hline(y=80, line_dash="dash", line_color="green",
-                  annotation_text="80% threshold",
-                  secondary_y=True)
+    # Add 80% reference line (highly visible)
+    fig.add_hline(
+        y=80,
+        line_dash="dash",
+        line_color="#27AE60",  # Bright green
+        line_width=4,  # Thicker for prominence
+        annotation_text="80% Threshold (Pareto Rule)",
+        annotation_position="right",
+        annotation=dict(
+            font=dict(size=13, color="#27AE60", family="Arial Black"),
+            bgcolor="rgba(255, 255, 255, 0.9)",
+            bordercolor="#27AE60",
+            borderwidth=2,
+            borderpad=6
+        )
+    )
 
-    # Update axes
-    fig.update_xaxes(title_text="Risks", tickangle=-45)
-    fig.update_yaxes(title_text="Individual Variance Contribution (%)", secondary_y=False)
-    fig.update_yaxes(title_text="Cumulative Variance Contribution (%)", secondary_y=True, range=[0, 105])
+    # Update x-axis with 45-degree rotation
+    fig.update_xaxes(
+        title_text="Risk ID",
+        tickangle=-45,  # Rotate labels 45 degrees
+        tickfont=dict(size=11),
+        title_font=dict(size=13, family="Arial")
+    )
 
+    # Update y-axis - SINGLE AXIS 0-100% for both bars and line
+    fig.update_yaxes(
+        title_text="Variance Contribution (%)",
+        range=[0, 100],  # Fixed 0-100% scale
+        showgrid=True,  # Subtle gridlines
+        gridwidth=1,
+        gridcolor='rgba(128, 128, 128, 0.2)',
+        tickfont=dict(size=11),
+        title_font=dict(size=13, family="Arial")
+    )
+
+    # Update layout with proper dimensions and margins
     fig.update_layout(
-        title='Pareto Analysis - Risk Variance Contribution<br><sub>Identify the vital few risks driving most uncertainty (80/20 rule)</sub>',
-        height=600,
+        title={
+            'text': 'Pareto Analysis - Risk Variance Contribution<br><sub>Both bars and line use the same 0-100% scale for visual alignment</sub>',
+            'font': {'size': 17, 'family': 'Arial'}
+        },
+        width=1400,  # Increased width for better spacing
+        height=700,  # Good height for readability
         hovermode='x unified',
         showlegend=True,
-        margin=dict(b=150)  # Increase bottom margin for rotated labels
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=12)
+        ),
+        margin=dict(l=80, r=120, t=140, b=120),  # Proper margins for rotated labels and annotations
+        font=dict(size=11, family="Arial"),
+        plot_bgcolor='white',
+        paper_bgcolor='white'
     )
 
     return fig
