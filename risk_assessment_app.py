@@ -148,6 +148,23 @@ def calculate_statistics(results):
         'max': np.max(results)
     }
 
+def get_confidence_value(stats, confidence_level):
+    """Get the risk value for the selected confidence level
+
+    Parameters:
+    - stats: Dictionary with statistical measures from calculate_statistics()
+    - confidence_level: String like 'P50', 'P80', or 'P95'
+
+    Returns:
+    - The corresponding percentile value
+    """
+    percentile_map = {
+        'P50': 'p50',
+        'P80': 'p80',
+        'P95': 'p95'
+    }
+    return stats[percentile_map[confidence_level]]
+
 def create_risk_heatmap(df, risk_type='initial'):
     """Create risk heatmap showing concentration of risks in each cell"""
     if risk_type == 'initial':
@@ -371,13 +388,13 @@ def create_risk_matrix(df, risk_type='initial'):
     
     return fig
 
-def create_cdf_plot(results, stats, risk_type):
-    """Create cumulative distribution function plot"""
+def create_cdf_plot(results, stats, risk_type, selected_confidence='P95'):
+    """Create cumulative distribution function plot with highlighted confidence level"""
     sorted_results = np.sort(results)
     cdf = np.arange(1, len(sorted_results) + 1) / len(sorted_results)
-    
+
     fig = go.Figure()
-    
+
     # CDF line
     fig.add_trace(go.Scatter(
         x=sorted_results,
@@ -386,17 +403,27 @@ def create_cdf_plot(results, stats, risk_type):
         name='CDF',
         line=dict(color='blue', width=2)
     ))
-    
-    # Add percentile lines
-    percentiles = [('P50', stats['p50'], 'green'), 
-                   ('P80', stats['p80'], 'orange'), 
+
+    # Add percentile lines with highlighting for selected confidence level
+    percentiles = [('P50', stats['p50'], 'green'),
+                   ('P80', stats['p80'], 'orange'),
                    ('P95', stats['p95'], 'red')]
-    
+
     for label, value, color in percentiles:
-        fig.add_vline(x=value, line_dash="dash", line_color=color,
-                     annotation_text=f"{label}: {value/1e6:.2f}M CHF",
+        # Make selected confidence level more prominent
+        if label == selected_confidence:
+            line_width = 4
+            line_dash = "solid"
+            annotation_text = f"★ {label}: {value/1e6:.2f}M CHF (ACTIVE)"
+        else:
+            line_width = 2
+            line_dash = "dash"
+            annotation_text = f"{label}: {value/1e6:.2f}M CHF"
+
+        fig.add_vline(x=value, line_dash=line_dash, line_color=color, line_width=line_width,
+                     annotation_text=annotation_text,
                      annotation_position="top")
-    
+
     fig.update_layout(
         title=f'Cumulative Distribution Function - {risk_type.title()} Risk Exposure',
         xaxis_title='Total Risk Exposure (CHF)',
@@ -404,7 +431,7 @@ def create_cdf_plot(results, stats, risk_type):
         height=500,
         hovermode='x unified'
     )
-    
+
     return fig
 
 def create_box_plot(initial_results, residual_results):
@@ -832,6 +859,7 @@ def main():
             st.session_state['df'] = df
             st.session_state['df_with_roi'] = df_with_roi
             st.session_state['sensitivity_df'] = sensitivity_df
+            st.session_state['confidence_level'] = confidence_level
             st.session_state['simulation_run'] = True
             
         st.sidebar.success("✅ Simulation completed!")
@@ -844,6 +872,7 @@ def main():
         residual_stats = st.session_state['residual_stats']
         df = st.session_state['df']
         df_with_roi = st.session_state['df_with_roi']
+        confidence_level = st.session_state.get('confidence_level', 'P95')
         
         # Create tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -858,25 +887,32 @@ def main():
         
         with tab1:
             st.header("Risk Portfolio Dashboard")
-            
+
+            # Display active confidence level
+            st.info(f"📊 **Active Confidence Level: {confidence_level}** | Showing risk exposure at {confidence_level} percentile")
+
             # Key metrics
             col1, col2, col3, col4 = st.columns(4)
-            
+
+            # Get confidence-specific values
+            initial_confidence_value = get_confidence_value(initial_stats, confidence_level)
+            residual_confidence_value = get_confidence_value(residual_stats, confidence_level)
+
             with col1:
                 st.metric("Total Risks", len(df))
                 st.metric("Risks with Schedule Impact", df['Schedule_Impact'].sum())
-            
+
             with col2:
-                st.metric("Initial Risk (P95)", f"{initial_stats['p95']/1e6:.2f}M CHF")
+                st.metric(f"Initial Risk ({confidence_level})", f"{initial_confidence_value/1e6:.2f}M CHF")
                 st.metric("Initial Risk (Mean)", f"{initial_stats['mean']/1e6:.2f}M CHF")
-            
+
             with col3:
-                st.metric("Residual Risk (P95)", f"{residual_stats['p95']/1e6:.2f}M CHF")
+                st.metric(f"Residual Risk ({confidence_level})", f"{residual_confidence_value/1e6:.2f}M CHF")
                 st.metric("Residual Risk (Mean)", f"{residual_stats['mean']/1e6:.2f}M CHF")
-            
+
             with col4:
-                risk_reduction = ((initial_stats['p95'] - residual_stats['p95']) / initial_stats['p95'] * 100)
-                st.metric("Risk Reduction (P95)", f"{risk_reduction:.1f}%")
+                risk_reduction = ((initial_confidence_value - residual_confidence_value) / initial_confidence_value * 100)
+                st.metric(f"Risk Reduction ({confidence_level})", f"{risk_reduction:.1f}%")
                 total_mitigation_cost = df['Cost of Measures_Value'].sum()
                 st.metric("Total Mitigation Cost", f"{total_mitigation_cost/1e6:.2f}M CHF")
             
@@ -889,9 +925,29 @@ def main():
             
             # Statistics comparison table
             st.subheader("Statistical Summary")
-            
+
+            # Create metric names with indicator for selected confidence level
+            metric_labels = {
+                'Mean': 'Mean',
+                'P50': 'Median (P50)',
+                'P80': 'P80',
+                'P95': 'P95',
+                'Std Dev': 'Std Dev',
+                'Min': 'Min',
+                'Max': 'Max'
+            }
+
+            # Add visual indicator (★) to the active confidence level
+            metrics_list = ['Mean', 'P50', 'P80', 'P95', 'Std Dev', 'Min', 'Max']
+            display_metrics = []
+            for metric in metrics_list:
+                if metric == confidence_level:
+                    display_metrics.append(f"★ {metric_labels.get(metric, metric)} (ACTIVE)")
+                else:
+                    display_metrics.append(metric_labels.get(metric, metric))
+
             stats_df = pd.DataFrame({
-                'Metric': ['Mean', 'Median (P50)', 'P80', 'P95', 'Std Dev', 'Min', 'Max'],
+                'Metric': display_metrics,
                 'Initial Risk (M CHF)': [
                     f"{initial_stats['mean']/1e6:.2f}",
                     f"{initial_stats['p50']/1e6:.2f}",
@@ -911,7 +967,7 @@ def main():
                     f"{residual_stats['max']/1e6:.2f}"
                 ]
             })
-            
+
             st.dataframe(stats_df, use_container_width=True, hide_index=True)
         
         with tab2:
@@ -1115,15 +1171,15 @@ def main():
             
             # CDF plots
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 st.subheader("Initial Risk CDF")
-                cdf_initial = create_cdf_plot(initial_results, initial_stats, 'initial')
+                cdf_initial = create_cdf_plot(initial_results, initial_stats, 'initial', confidence_level)
                 st.plotly_chart(cdf_initial, use_container_width=True)
-            
+
             with col2:
                 st.subheader("Residual Risk CDF")
-                cdf_residual = create_cdf_plot(residual_results, residual_stats, 'residual')
+                cdf_residual = create_cdf_plot(residual_results, residual_stats, 'residual', confidence_level)
                 st.plotly_chart(cdf_residual, use_container_width=True)
         
         with tab5:
@@ -1217,7 +1273,12 @@ def main():
         
         with tab6:
             st.header("Risk Register")
-            
+
+            # Display portfolio-level confidence information
+            st.info(f"📊 **Portfolio Analysis using {confidence_level} confidence level** | "
+                   f"Total Portfolio Risk ({confidence_level}): Initial = {initial_confidence_value/1e6:.2f}M CHF, "
+                   f"Residual = {residual_confidence_value/1e6:.2f}M CHF")
+
             # Add filters
             st.subheader("Filters")
             col1, col2, col3 = st.columns(3)
@@ -1356,28 +1417,43 @@ def main():
             
             # Summary report
             st.subheader("📋 Summary Report")
-            
+
+            # Get selected confidence values
+            initial_selected = get_confidence_value(initial_stats, confidence_level)
+            residual_selected = get_confidence_value(residual_stats, confidence_level)
+            risk_reduction_selected = initial_selected - residual_selected
+            risk_reduction_pct = (risk_reduction_selected / initial_selected * 100)
+            net_benefit_selected = risk_reduction_selected - df['Cost of Measures_Value'].sum()
+
+            # Mark selected confidence level in the report
+            p50_marker = " ★ (SELECTED)" if confidence_level == "P50" else ""
+            p80_marker = " ★ (SELECTED)" if confidence_level == "P80" else ""
+            p95_marker = " ★ (SELECTED)" if confidence_level == "P95" else ""
+
             report = f"""
 # Risk Assessment Report
 **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 **Monte Carlo Simulations:** {n_simulations:,}
+**Selected Confidence Level:** {confidence_level}
 
 ## Executive Summary
 
-### Initial Risk Exposure
-- **P50 (Median):** {initial_stats['p50']/1e6:.2f} Million CHF
-- **P80:** {initial_stats['p80']/1e6:.2f} Million CHF
-- **P95:** {initial_stats['p95']/1e6:.2f} Million CHF
+### Primary Risk Assessment ({confidence_level} - Selected Confidence Level)
+- **Initial Risk Exposure:** {initial_selected/1e6:.2f} Million CHF
+- **Residual Risk Exposure (After Mitigation):** {residual_selected/1e6:.2f} Million CHF
+- **Total Risk Reduction:** {risk_reduction_selected/1e6:.2f} Million CHF ({risk_reduction_pct:.1f}%)
+- **Total Mitigation Investment:** {df['Cost of Measures_Value'].sum()/1e6:.2f} Million CHF
+- **Net Benefit:** {net_benefit_selected/1e6:.2f} Million CHF
+
+### Initial Risk Exposure (All Confidence Levels)
+- **P50 (Median):** {initial_stats['p50']/1e6:.2f} Million CHF{p50_marker}
+- **P80:** {initial_stats['p80']/1e6:.2f} Million CHF{p80_marker}
+- **P95:** {initial_stats['p95']/1e6:.2f} Million CHF{p95_marker}
 
 ### Residual Risk Exposure (After Mitigation)
-- **P50 (Median):** {residual_stats['p50']/1e6:.2f} Million CHF
-- **P80:** {residual_stats['p80']/1e6:.2f} Million CHF
-- **P95:** {residual_stats['p95']/1e6:.2f} Million CHF
-
-### Risk Reduction
-- **Total Risk Reduction (P95):** {(initial_stats['p95']-residual_stats['p95'])/1e6:.2f} Million CHF ({((initial_stats['p95']-residual_stats['p95'])/initial_stats['p95']*100):.1f}%)
-- **Total Mitigation Investment:** {df['Cost of Measures_Value'].sum()/1e6:.2f} Million CHF
-- **Net Benefit (P95):** {((initial_stats['p95']-residual_stats['p95'])-df['Cost of Measures_Value'].sum())/1e6:.2f} Million CHF
+- **P50 (Median):** {residual_stats['p50']/1e6:.2f} Million CHF{p50_marker}
+- **P80:** {residual_stats['p80']/1e6:.2f} Million CHF{p80_marker}
+- **P95:** {residual_stats['p95']/1e6:.2f} Million CHF{p95_marker}
 
 ### Key Findings
 - Total number of identified risks: {len(df)}
@@ -1385,8 +1461,11 @@ def main():
 - Risks with mitigation measures: {len(df[df['Cost of Measures_Value'] > 0])}
 
 ## Recommendations
-Based on the Monte Carlo simulation, the project should reserve at least **{residual_stats['p95']/1e6:.2f} Million CHF** 
-(P95 confidence level) for residual risk exposure after implementing all planned mitigation measures.
+Based on the Monte Carlo simulation with **{confidence_level}** confidence level, the project should reserve at least **{residual_selected/1e6:.2f} Million CHF**
+for residual risk exposure after implementing all planned mitigation measures.
+
+The selected {confidence_level} confidence level indicates that there is a {confidence_level.replace('P', '')}% probability that
+the actual risk exposure will be at or below this amount.
 """
             
             st.markdown(report)
