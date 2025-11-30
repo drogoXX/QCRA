@@ -1180,36 +1180,57 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
 
     doc.add_heading('Mitigation Cost-Benefit Analysis', 1)
 
-    df_with_measures = df_with_roi[df_with_roi['Cost of Measures_Value'] > 0]
+    # Calculate overall portfolio metrics (all risks where reduction occurred)
+    df_with_reduction = df_with_roi[df_with_roi['Risk_Reduction'] > 0].copy()
 
-    if len(df_with_measures) > 0:
-        # Summary metrics
-        total_reduction = df_with_measures['Risk_Reduction'].sum()
-        total_cost = df_with_measures['Cost of Measures_Value'].sum()
-        net_benefit = total_reduction - total_cost
+    # Separate into risks with and without mitigation costs
+    df_with_measures = df_with_reduction[df_with_reduction['Cost of Measures_Value'] > 0]
+    df_without_measures = df_with_reduction[df_with_reduction['Cost of Measures_Value'] == 0]
+
+    if len(df_with_reduction) > 0:
+        # Overall metrics (all risks with reduction)
+        total_reduction_all = df_with_reduction['Risk_Reduction'].sum()
+
+        # Metrics for risks with mitigation measures
+        total_reduction_with_cost = df_with_measures['Risk_Reduction'].sum() if len(df_with_measures) > 0 else 0
+        total_cost = df_with_measures['Cost of Measures_Value'].sum() if len(df_with_measures) > 0 else 0
+
+        # Metrics for risks without mitigation cost but still reduced
+        total_reduction_no_cost = df_without_measures['Risk_Reduction'].sum() if len(df_without_measures) > 0 else 0
+
+        net_benefit = total_reduction_all - total_cost
 
         summary = doc.add_paragraph()
-        summary_title = summary.add_run('Mitigation Summary:\n')
+        summary_title = summary.add_run('Overall Risk Reduction Summary:\n')
         summary_title.bold = True
         summary_title.font.name = 'Calibri'
         summary_title.font.size = Pt(11)
 
         summary_text = summary.add_run(
-            f'• Expected Value Reduction (Mean): {total_reduction/1e6:.2f} Million CHF\n'
+            f'• Total Risk Reduction (All Risks): {total_reduction_all/1e6:.2f} Million CHF\n'
+            f'  - With Mitigation Measures ({len(df_with_measures)} risks): {total_reduction_with_cost/1e6:.2f} Million CHF\n'
+            f'  - Natural Reduction ({len(df_without_measures)} risks): {total_reduction_no_cost/1e6:.2f} Million CHF\n'
             f'• Total Mitigation Cost: {total_cost/1e6:.2f} Million CHF\n'
-            f'• Net Benefit (Mean): {net_benefit/1e6:.2f} Million CHF\n'
-            f'• Benefit/Cost Ratio: {total_reduction/total_cost:.2f}\n'
+            f'• Net Benefit: {net_benefit/1e6:.2f} Million CHF\n'
         )
         summary_text.font.name = 'Calibri'
-        summary_text.font.size = Pt(11)
+        summary_text.font.size = Pt(10)
+
+        if total_cost > 0:
+            bc_ratio_text = summary.add_run(f'• Benefit/Cost Ratio: {total_reduction_with_cost/total_cost:.2f}\n')
+            bc_ratio_text.font.name = 'Calibri'
+            bc_ratio_text.font.size = Pt(10)
 
         # Add explanation note
         doc.add_paragraph()
         note = doc.add_paragraph()
         note_run = note.add_run(
-            'Note: These values represent the sum of individual risk Expected Values (Impact × Likelihood). '
-            'This differs from the portfolio-level Monte Carlo percentiles shown in the Executive Summary, '
-            'which account for probabilistic portfolio effects and correlations.'
+            'Note: "Total Risk Reduction" includes all risks where reduction occurred. '
+            '"Natural Reduction" refers to risks that reduced without explicit mitigation costs '
+            '(e.g., due to changed circumstances, passive controls, or re-assessment). '
+            'The Benefit/Cost Ratio only considers risks with active mitigation measures. '
+            'These values represent the sum of individual risk Expected Values (Impact × Likelihood), '
+            'which differs from portfolio-level Monte Carlo percentiles in the Executive Summary.'
         )
         note_run.font.size = Pt(9)
         note_run.font.name = 'Calibri'
@@ -1221,30 +1242,43 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
             doc.add_heading('Return on Investment', 2)
             doc.add_picture(roi_chart_img, width=Inches(6))
 
-        # Top ROI opportunities table
-        doc.add_heading('Top 10 Mitigation Opportunities', 2)
+        # Top ROI opportunities table (only for risks with mitigation costs)
+        if len(df_with_measures) > 0:
+            doc.add_heading('Top 10 Mitigation Opportunities (Active Measures)', 2)
 
-        top_roi = df_with_measures.nlargest(10, 'ROI')
+            # Add clarifying note
+            roi_note = doc.add_paragraph()
+            roi_note_run = roi_note.add_run('This table shows risks with active mitigation measures (Cost > 0). ')
+            roi_note_run.font.size = Pt(9)
+            roi_note_run.font.name = 'Calibri'
+            roi_note_run.font.italic = True
+            roi_note_run.font.color.rgb = RGBColor(89, 89, 89)
 
-        table = doc.add_table(rows=11, cols=5)
+            top_roi = df_with_measures.nlargest(10, 'ROI')
 
-        # Headers
-        headers = ['Risk ID', 'Description', 'Risk Reduction (M CHF)', 'Cost (M CHF)', 'ROI %']
-        for i, header in enumerate(headers):
-            table.rows[0].cells[i].text = header
+            table = doc.add_table(rows=min(len(top_roi) + 1, 11), cols=5)
 
-        # Data
-        for i, (_, risk) in enumerate(top_roi.iterrows(), 1):
-            table.rows[i].cells[0].text = str(risk['Risk ID'])
-            table.rows[i].cells[1].text = risk['Risk Description'][:40] + ('...' if len(risk['Risk Description']) > 40 else '')
-            table.rows[i].cells[2].text = f'{risk["Risk_Reduction"]/1e6:.2f}'
-            table.rows[i].cells[3].text = f'{risk["Cost of Measures_Value"]/1e6:.2f}'
-            table.rows[i].cells[4].text = f'{risk["ROI"]:.1f}%'
+            # Headers
+            headers = ['Risk ID', 'Description', 'Risk Reduction (M CHF)', 'Cost (M CHF)', 'ROI %']
+            for i, header in enumerate(headers):
+                table.rows[0].cells[i].text = header
 
-        # Apply professional formatting
-        format_table_professional(table, has_header=True)
+            # Data
+            for i, (_, risk) in enumerate(top_roi.iterrows(), 1):
+                table.rows[i].cells[0].text = str(risk['Risk ID'])
+                table.rows[i].cells[1].text = risk['Risk Description'][:40] + ('...' if len(risk['Risk Description']) > 40 else '')
+                table.rows[i].cells[2].text = f'{risk["Risk_Reduction"]/1e6:.2f}'
+                table.rows[i].cells[3].text = f'{risk["Cost of Measures_Value"]/1e6:.2f}'
+                table.rows[i].cells[4].text = f'{risk["ROI"]:.1f}%'
+
+            # Apply professional formatting
+            format_table_professional(table, has_header=True)
     else:
-        doc.add_paragraph('No mitigation measures defined in the risk register.')
+        no_reduction_para = doc.add_paragraph()
+        no_reduction_text = no_reduction_para.add_run('No risk reduction occurred in the portfolio. All risks maintained the same expected values.')
+        no_reduction_text.font.name = 'Calibri'
+        no_reduction_text.font.size = Pt(11)
+        no_reduction_text.font.italic = True
 
     doc.add_page_break()
 
