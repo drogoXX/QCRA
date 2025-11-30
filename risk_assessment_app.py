@@ -1411,12 +1411,14 @@ def add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confiden
     metrics = ['Mean', 'Median (P50)', 'P80', 'P95', 'Std Dev', 'Min', 'Max']
     stat_keys = ['mean', 'p50', 'p80', 'p95', 'std', 'min', 'max']
 
+    highlight_row = None
     for i, (metric, key) in enumerate(zip(metrics, stat_keys), 1):
         # Highlight selected confidence level
         if (key == 'p50' and confidence_level == 'P50') or \
            (key == 'p80' and confidence_level == 'P80') or \
            (key == 'p95' and confidence_level == 'P95'):
             table.rows[i].cells[0].text = f'★ {metric} (SELECTED)'
+            highlight_row = i
         else:
             table.rows[i].cells[0].text = metric
 
@@ -1424,7 +1426,7 @@ def add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confiden
         table.rows[i].cells[2].text = f'{residual_stats[key]/1e6:.2f}'
 
     # Apply professional formatting
-    format_table_professional(table, has_header=True)
+    format_table_executive(table, has_header=True, highlight_rows=[highlight_row] if highlight_row else [])
 
     # Add risk matrix chart if provided
     if risk_matrix_img:
@@ -1520,7 +1522,7 @@ def add_docx_sensitivity_section(doc, sensitivity_df, pareto_img=None):
         table.rows[i].cells[3].text = f'{risk["Cumulative %"]:.1f}%'
 
     # Apply professional formatting
-    format_table_professional(table, has_header=True)
+    format_table_executive(table, has_header=True)
 
     doc.add_page_break()
 
@@ -1622,7 +1624,7 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
                 table.rows[i].cells[4].text = f'{risk["ROI"]:.1f}%'
 
             # Apply professional formatting
-            format_table_professional(table, has_header=True)
+            format_table_executive(table, has_header=True)
     else:
         no_reduction_para = doc.add_paragraph()
         no_reduction_text = no_reduction_para.add_run('No risk reduction occurred in the portfolio. All risks maintained the same expected values.')
@@ -1661,7 +1663,7 @@ def add_docx_risk_register_appendix(doc, df):
         table.rows[i].cells[6].text = f'{risk["Cost of Measures_Value"]:,.0f}'
 
     # Apply professional formatting
-    format_table_professional(table, has_header=True)
+    format_table_executive(table, has_header=True)
 
     doc.add_paragraph()  # Spacing
     note = doc.add_paragraph()
