@@ -797,45 +797,139 @@ def create_pareto_chart(sensitivity_df, top_n=20):
     return fig
 
 # DOCX Report Generation Functions
-def plotly_to_image_bytes(fig, width=1600, height=800):
-    """Convert Plotly figure to PNG image bytes for embedding in Word"""
-    try:
-        img_bytes = fig.to_image(format="png", width=width, height=height, scale=2)
-        return io.BytesIO(img_bytes)
-    except Exception as e:
-        st.warning(f"Could not convert chart to image: {e}")
-        return None
+def set_cell_background(cell, fill_color):
+    """Set background color for table cell"""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
 
-def add_docx_cover_page(doc, confidence_level):
-    """Add professional cover page to DOCX report"""
+    shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_color}"/>')
+    cell._element.get_or_add_tcPr().append(shading_elm)
+
+def set_cell_border(cell, **kwargs):
+    """
+    Set cell border
+    kwargs: top, bottom, left, right, insideH, insideV
+    values: {'sz': 24, 'val': 'single', 'color': '#000000'}
+    """
+    from docx.oxml import OxmlElement, parse_xml
+    from docx.oxml.ns import qn
+
+    tc = cell._element
+    tcPr = tc.get_or_add_tcPr()
+    tcBorders = OxmlElement('w:tcBorders')
+
+    for edge in ('top', 'left', 'bottom', 'right'):
+        if edge in kwargs:
+            edge_data = kwargs.get(edge)
+            edge_el = OxmlElement(f'w:{edge}')
+            edge_el.set(qn('w:val'), edge_data.get('val', 'single'))
+            edge_el.set(qn('w:sz'), str(edge_data.get('sz', 4)))
+            edge_el.set(qn('w:color'), edge_data.get('color', '000000'))
+            tcBorders.append(edge_el)
+
+    tcPr.append(tcBorders)
+
+def format_table_professional(table, has_header=True):
+    """Apply professional formatting to table"""
     from docx.shared import Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+    # Set column widths to auto
+    for row in table.rows:
+        for cell in row.cells:
+            cell.vertical_alignment = 1  # Center vertically
+
+    if has_header and len(table.rows) > 0:
+        # Format header row
+        for cell in table.rows[0].cells:
+            # Dark blue background
+            set_cell_background(cell, "1F4E78")
+            # White text
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.bold = True
+                    run.font.size = Pt(11)
+                    run.font.color.rgb = RGBColor(255, 255, 255)
+                    run.font.name = 'Calibri'
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Format data rows with alternating colors
+    for i, row in enumerate(table.rows[1:], 1):
+        # Alternating row colors
+        if i % 2 == 0:
+            bg_color = "F2F2F2"  # Light gray
+        else:
+            bg_color = "FFFFFF"  # White
+
+        for cell in row.cells:
+            set_cell_background(cell, bg_color)
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = Pt(10)
+                    run.font.name = 'Calibri'
+                    run.font.color.rgb = RGBColor(0, 0, 0)
+
+def plotly_to_image_bytes(fig, width=1600, height=800):
+    """Convert Plotly figure to PNG image bytes - OPTIONAL, returns None if not available"""
+    # Charts are now optional - report will work fine without them
+    # This avoids Chrome/kaleido dependency
+    return None
+
+def add_docx_cover_page(doc, confidence_level):
+    """Add professional cover page to DOCX report"""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Add spacing at top
+    doc.add_paragraph()
+    doc.add_paragraph()
+    doc.add_paragraph()
+
     # Title
-    title = doc.add_heading('Risk Assessment Report', 0)
+    title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_run = title.runs[0]
-    title_run.font.size = Pt(32)
-    title_run.font.color.rgb = RGBColor(31, 119, 180)  # Professional blue
+    title_run = title.add_run('Risk Assessment Report')
+    title_run.font.size = Pt(44)
+    title_run.font.bold = True
+    title_run.font.color.rgb = RGBColor(31, 78, 120)  # Professional dark blue
+    title_run.font.name = 'Calibri'
+
+    # Spacing
+    doc.add_paragraph()
 
     # Subtitle
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle_run = subtitle.add_run('Monte Carlo Simulation & Probabilistic Risk Analysis')
-    subtitle_run.font.size = Pt(16)
-    subtitle_run.font.color.rgb = RGBColor(108, 117, 125)  # Gray
+    subtitle_run.font.size = Pt(18)
+    subtitle_run.font.color.rgb = RGBColor(89, 89, 89)  # Gray
+    subtitle_run.font.name = 'Calibri'
 
-    doc.add_paragraph()  # Spacing
+    # More spacing
+    doc.add_paragraph()
+    doc.add_paragraph()
+    doc.add_paragraph()
 
-    # Report metadata
+    # Horizontal line
+    line = doc.add_paragraph('_' * 80)
+    line.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph()
+
+    # Report metadata in a nice box
     metadata = doc.add_paragraph()
     metadata.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    metadata_text = f"""
-Generated: {datetime.now().strftime('%B %d, %Y at %H:%M')}
-Confidence Level: {confidence_level}
-    """
-    metadata_run = metadata.add_run(metadata_text)
-    metadata_run.font.size = Pt(12)
+
+    meta_run = metadata.add_run(f'Generated: {datetime.now().strftime("%B %d, %Y at %H:%M")}\n')
+    meta_run.font.size = Pt(12)
+    meta_run.font.name = 'Calibri'
+    meta_run.font.color.rgb = RGBColor(89, 89, 89)
+
+    conf_run = metadata.add_run(f'Confidence Level: {confidence_level}')
+    conf_run.font.size = Pt(14)
+    conf_run.font.bold = True
+    conf_run.font.name = 'Calibri'
+    conf_run.font.color.rgb = RGBColor(31, 78, 120)
 
     # Page break
     doc.add_page_break()
@@ -846,7 +940,10 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     # Section heading
-    doc.add_heading('Executive Summary', 1)
+    heading = doc.add_heading('Executive Summary', 1)
+    for run in heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
 
     # Get selected confidence values
     initial_selected = get_confidence_value(initial_stats, confidence_level)
@@ -856,19 +953,33 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
 
     # Key findings paragraph
     intro = doc.add_paragraph()
-    intro.add_run('Overview: ').bold = True
-    intro.add_run(
+    intro_bold = intro.add_run('Overview: ')
+    intro_bold.bold = True
+    intro_bold.font.name = 'Calibri'
+    intro_bold.font.size = Pt(11)
+
+    intro_text = intro.add_run(
         f'This risk assessment analyzes {len(df)} identified risks using Monte Carlo simulation '
         f'with {confidence_level} confidence level. The analysis provides probabilistic estimates '
         f'of total risk exposure and evaluates the effectiveness of planned mitigation measures.'
     )
+    intro_text.font.name = 'Calibri'
+    intro_text.font.size = Pt(11)
+
+    doc.add_paragraph()  # Spacing
 
     # Primary metrics
-    doc.add_heading('Key Risk Metrics', 2)
+    metrics_heading = doc.add_heading('Key Risk Metrics', 2)
+    for run in metrics_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
 
-    # Create table for key metrics
-    table = doc.add_table(rows=5, cols=2)
-    table.style = 'Light Grid Accent 1'
+    # Create table for key metrics with professional formatting
+    table = doc.add_table(rows=6, cols=2)
+
+    # Headers
+    table.rows[0].cells[0].text = 'Metric'
+    table.rows[0].cells[1].text = 'Value'
 
     metrics = [
         ('Initial Risk Exposure', f'{initial_selected/1e6:.2f} Million CHF'),
@@ -878,14 +989,20 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
         ('Net Benefit', f'{(risk_reduction_selected - df["Cost of Measures_Value"].sum())/1e6:.2f} Million CHF')
     ]
 
-    for i, (metric, value) in enumerate(metrics):
+    for i, (metric, value) in enumerate(metrics, 1):
         table.rows[i].cells[0].text = metric
         table.rows[i].cells[1].text = value
-        # Make metric names bold
-        table.rows[i].cells[0].paragraphs[0].runs[0].font.bold = True
+
+    # Apply professional formatting
+    format_table_professional(table, has_header=True)
+
+    doc.add_paragraph()  # Spacing
 
     # Top risks section
-    doc.add_heading('Critical Risks', 2)
+    top_risks_heading = doc.add_heading('Critical Risks', 2)
+    for run in top_risks_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
 
     top_risks = df.nlargest(5, 'Initial_EV')
     top_risks_para = doc.add_paragraph()
@@ -934,15 +1051,11 @@ def add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confiden
 
     # Create statistics table
     table = doc.add_table(rows=8, cols=3)
-    table.style = 'Light Grid Accent 1'
 
     # Headers
     table.rows[0].cells[0].text = 'Metric'
     table.rows[0].cells[1].text = 'Initial Risk (M CHF)'
     table.rows[0].cells[2].text = 'Residual Risk (M CHF)'
-
-    for cell in table.rows[0].cells:
-        cell.paragraphs[0].runs[0].font.bold = True
 
     # Data rows
     metrics = ['Mean', 'Median (P50)', 'P80', 'P95', 'Std Dev', 'Min', 'Max']
@@ -954,12 +1067,14 @@ def add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confiden
            (key == 'p80' and confidence_level == 'P80') or \
            (key == 'p95' and confidence_level == 'P95'):
             table.rows[i].cells[0].text = f'★ {metric} (SELECTED)'
-            table.rows[i].cells[0].paragraphs[0].runs[0].font.bold = True
         else:
             table.rows[i].cells[0].text = metric
 
         table.rows[i].cells[1].text = f'{initial_stats[key]/1e6:.2f}'
         table.rows[i].cells[2].text = f'{residual_stats[key]/1e6:.2f}'
+
+    # Apply professional formatting
+    format_table_professional(table, has_header=True)
 
     # Add risk matrix chart if provided
     if risk_matrix_img:
@@ -1041,13 +1156,11 @@ def add_docx_sensitivity_section(doc, sensitivity_df, pareto_img=None):
     doc.add_heading('Top 10 Risk Drivers', 2)
 
     table = doc.add_table(rows=11, cols=4)
-    table.style = 'Light Grid Accent 1'
 
     # Headers
     headers = ['Risk ID', 'Description', 'Variance %', 'Cumulative %']
     for i, header in enumerate(headers):
         table.rows[0].cells[i].text = header
-        table.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
 
     # Data
     for i, (_, risk) in enumerate(sensitivity_df.head(10).iterrows(), 1):
@@ -1055,6 +1168,9 @@ def add_docx_sensitivity_section(doc, sensitivity_df, pareto_img=None):
         table.rows[i].cells[1].text = risk['Risk Description'][:50] + ('...' if len(risk['Risk Description']) > 50 else '')
         table.rows[i].cells[2].text = f'{risk["Variance %"]:.2f}%'
         table.rows[i].cells[3].text = f'{risk["Cumulative %"]:.1f}%'
+
+    # Apply professional formatting
+    format_table_professional(table, has_header=True)
 
     doc.add_page_break()
 
@@ -1092,13 +1208,11 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
         top_roi = df_with_measures.nlargest(10, 'ROI')
 
         table = doc.add_table(rows=11, cols=5)
-        table.style = 'Light Grid Accent 1'
 
         # Headers
         headers = ['Risk ID', 'Description', 'Risk Reduction (M CHF)', 'Cost (M CHF)', 'ROI %']
         for i, header in enumerate(headers):
             table.rows[0].cells[i].text = header
-            table.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
 
         # Data
         for i, (_, risk) in enumerate(top_roi.iterrows(), 1):
@@ -1107,6 +1221,9 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
             table.rows[i].cells[2].text = f'{risk["Risk_Reduction"]/1e6:.2f}'
             table.rows[i].cells[3].text = f'{risk["Cost of Measures_Value"]/1e6:.2f}'
             table.rows[i].cells[4].text = f'{risk["ROI"]:.1f}%'
+
+        # Apply professional formatting
+        format_table_professional(table, has_header=True)
     else:
         doc.add_paragraph('No mitigation measures defined in the risk register.')
 
@@ -1122,14 +1239,12 @@ def add_docx_risk_register_appendix(doc, df):
                    'Residual risk_Value', 'Residual_Likelihood', 'Cost of Measures_Value']
 
     table = doc.add_table(rows=len(df) + 1, cols=len(display_cols))
-    table.style = 'Light Grid Accent 1'
 
     # Headers
     headers = ['Risk ID', 'Description', 'Initial Risk (CHF)', 'Initial Likelihood',
                'Residual Risk (CHF)', 'Residual Likelihood', 'Mitigation Cost (CHF)']
     for i, header in enumerate(headers):
         table.rows[0].cells[i].text = header
-        table.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
 
     # Data
     for i, (_, risk) in enumerate(df.iterrows(), 1):
@@ -1140,6 +1255,16 @@ def add_docx_risk_register_appendix(doc, df):
         table.rows[i].cells[4].text = f'{risk["Residual risk_Value"]:,.0f}'
         table.rows[i].cells[5].text = f'{risk["Residual_Likelihood"]:.1%}'
         table.rows[i].cells[6].text = f'{risk["Cost of Measures_Value"]:,.0f}'
+
+    # Apply professional formatting
+    format_table_professional(table, has_header=True)
+
+    doc.add_paragraph()  # Spacing
+    note = doc.add_paragraph()
+    note_run = note.add_run('Note: This table contains the complete risk register with all identified risks.')
+    note_run.font.size = Pt(9)
+    note_run.font.name = 'Calibri'
+    note_run.font.italic = True
 
     doc.add_page_break()
 
