@@ -796,6 +796,485 @@ def create_pareto_chart(sensitivity_df, top_n=20):
 
     return fig
 
+# DOCX Report Generation Functions
+def plotly_to_image_bytes(fig, width=1600, height=800):
+    """Convert Plotly figure to PNG image bytes for embedding in Word"""
+    try:
+        img_bytes = fig.to_image(format="png", width=width, height=height, scale=2)
+        return io.BytesIO(img_bytes)
+    except Exception as e:
+        st.warning(f"Could not convert chart to image: {e}")
+        return None
+
+def add_docx_cover_page(doc, confidence_level):
+    """Add professional cover page to DOCX report"""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Title
+    title = doc.add_heading('Risk Assessment Report', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title.runs[0]
+    title_run.font.size = Pt(32)
+    title_run.font.color.rgb = RGBColor(31, 119, 180)  # Professional blue
+
+    # Subtitle
+    subtitle = doc.add_paragraph()
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    subtitle_run = subtitle.add_run('Monte Carlo Simulation & Probabilistic Risk Analysis')
+    subtitle_run.font.size = Pt(16)
+    subtitle_run.font.color.rgb = RGBColor(108, 117, 125)  # Gray
+
+    doc.add_paragraph()  # Spacing
+
+    # Report metadata
+    metadata = doc.add_paragraph()
+    metadata.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    metadata_text = f"""
+Generated: {datetime.now().strftime('%B %d, %Y at %H:%M')}
+Confidence Level: {confidence_level}
+    """
+    metadata_run = metadata.add_run(metadata_text)
+    metadata_run.font.size = Pt(12)
+
+    # Page break
+    doc.add_page_break()
+
+def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidence_level):
+    """Add executive summary section to DOCX report"""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Section heading
+    doc.add_heading('Executive Summary', 1)
+
+    # Get selected confidence values
+    initial_selected = get_confidence_value(initial_stats, confidence_level)
+    residual_selected = get_confidence_value(residual_stats, confidence_level)
+    risk_reduction_selected = initial_selected - residual_selected
+    risk_reduction_pct = (risk_reduction_selected / initial_selected * 100) if initial_selected > 0 else 0
+
+    # Key findings paragraph
+    intro = doc.add_paragraph()
+    intro.add_run('Overview: ').bold = True
+    intro.add_run(
+        f'This risk assessment analyzes {len(df)} identified risks using Monte Carlo simulation '
+        f'with {confidence_level} confidence level. The analysis provides probabilistic estimates '
+        f'of total risk exposure and evaluates the effectiveness of planned mitigation measures.'
+    )
+
+    # Primary metrics
+    doc.add_heading('Key Risk Metrics', 2)
+
+    # Create table for key metrics
+    table = doc.add_table(rows=5, cols=2)
+    table.style = 'Light Grid Accent 1'
+
+    metrics = [
+        ('Initial Risk Exposure', f'{initial_selected/1e6:.2f} Million CHF'),
+        ('Residual Risk Exposure', f'{residual_selected/1e6:.2f} Million CHF'),
+        ('Risk Reduction', f'{risk_reduction_selected/1e6:.2f} Million CHF ({risk_reduction_pct:.1f}%)'),
+        ('Total Mitigation Cost', f'{df["Cost of Measures_Value"].sum()/1e6:.2f} Million CHF'),
+        ('Net Benefit', f'{(risk_reduction_selected - df["Cost of Measures_Value"].sum())/1e6:.2f} Million CHF')
+    ]
+
+    for i, (metric, value) in enumerate(metrics):
+        table.rows[i].cells[0].text = metric
+        table.rows[i].cells[1].text = value
+        # Make metric names bold
+        table.rows[i].cells[0].paragraphs[0].runs[0].font.bold = True
+
+    # Top risks section
+    doc.add_heading('Critical Risks', 2)
+
+    top_risks = df.nlargest(5, 'Initial_EV')
+    top_risks_para = doc.add_paragraph()
+    top_risks_para.add_run(
+        f'The top 5 risks by expected value account for '
+        f'{top_risks["Initial_EV"].sum() / df["Initial_EV"].sum() * 100:.1f}% '
+        f'of total portfolio exposure:\n'
+    )
+
+    for idx, (_, risk) in enumerate(top_risks.iterrows(), 1):
+        risk_para = doc.add_paragraph(style='List Number')
+        risk_para.add_run(f'{risk["Risk ID"]}: ').bold = True
+        risk_para.add_run(
+            f'{risk["Risk Description"]} '
+            f'(Expected Value: {risk["Initial_EV"]/1e6:.2f}M CHF)'
+        )
+
+    # Recommendations
+    doc.add_heading('Recommendations', 2)
+
+    rec_para = doc.add_paragraph()
+    rec_para.add_run(
+        f'Based on the {confidence_level} confidence level analysis, it is recommended to:\n'
+    )
+
+    recommendations = [
+        f'Reserve at least {residual_selected/1e6:.2f} Million CHF for residual risk exposure',
+        f'Focus mitigation efforts on the top {min(10, len(df))} risks which drive most uncertainty',
+        'Monitor risks with schedule impact closely as they may cause project delays',
+        'Review and update risk assessments quarterly to reflect changing conditions'
+    ]
+
+    for rec in recommendations:
+        rec_item = doc.add_paragraph(rec, style='List Bullet')
+
+    doc.add_page_break()
+
+def add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img=None):
+    """Add risk portfolio overview section with statistics and charts"""
+    from docx.shared import Inches
+
+    doc.add_heading('Risk Portfolio Overview', 1)
+
+    # Statistical summary
+    doc.add_heading('Statistical Summary', 2)
+
+    # Create statistics table
+    table = doc.add_table(rows=8, cols=3)
+    table.style = 'Light Grid Accent 1'
+
+    # Headers
+    table.rows[0].cells[0].text = 'Metric'
+    table.rows[0].cells[1].text = 'Initial Risk (M CHF)'
+    table.rows[0].cells[2].text = 'Residual Risk (M CHF)'
+
+    for cell in table.rows[0].cells:
+        cell.paragraphs[0].runs[0].font.bold = True
+
+    # Data rows
+    metrics = ['Mean', 'Median (P50)', 'P80', 'P95', 'Std Dev', 'Min', 'Max']
+    stat_keys = ['mean', 'p50', 'p80', 'p95', 'std', 'min', 'max']
+
+    for i, (metric, key) in enumerate(zip(metrics, stat_keys), 1):
+        # Highlight selected confidence level
+        if (key == 'p50' and confidence_level == 'P50') or \
+           (key == 'p80' and confidence_level == 'P80') or \
+           (key == 'p95' and confidence_level == 'P95'):
+            table.rows[i].cells[0].text = f'★ {metric} (SELECTED)'
+            table.rows[i].cells[0].paragraphs[0].runs[0].font.bold = True
+        else:
+            table.rows[i].cells[0].text = metric
+
+        table.rows[i].cells[1].text = f'{initial_stats[key]/1e6:.2f}'
+        table.rows[i].cells[2].text = f'{residual_stats[key]/1e6:.2f}'
+
+    # Add risk matrix chart if provided
+    if risk_matrix_img:
+        doc.add_heading('Risk Matrix Visualization', 2)
+        doc.add_picture(risk_matrix_img, width=Inches(6))
+
+    doc.add_page_break()
+
+def add_docx_monte_carlo_section(doc, n_simulations, cdf_img=None, histogram_img=None):
+    """Add Monte Carlo simulation results section"""
+    from docx.shared import Inches
+
+    doc.add_heading('Monte Carlo Simulation Results', 1)
+
+    intro = doc.add_paragraph()
+    intro.add_run(
+        f'The risk assessment used Monte Carlo simulation with {n_simulations:,} iterations '
+        f'to model the probabilistic distribution of total risk exposure. This approach accounts '
+        f'for the uncertainty in both risk occurrence and impact.'
+    )
+
+    # CDF plot
+    if cdf_img:
+        doc.add_heading('Cumulative Distribution Function', 2)
+        desc = doc.add_paragraph()
+        desc.add_run(
+            'The CDF shows the probability that total risk exposure will be at or below a given value. '
+            'The selected confidence level is highlighted in the chart.'
+        )
+        doc.add_picture(cdf_img, width=Inches(6))
+
+    # Histogram
+    if histogram_img:
+        doc.add_heading('Risk Distribution', 2)
+        desc = doc.add_paragraph()
+        desc.add_run(
+            'The histogram shows the frequency distribution of simulated total risk exposures, '
+            'providing insight into the most likely outcomes.'
+        )
+        doc.add_picture(histogram_img, width=Inches(6))
+
+    doc.add_page_break()
+
+def add_docx_sensitivity_section(doc, sensitivity_df, pareto_img=None):
+    """Add sensitivity analysis section"""
+    from docx.shared import Inches
+
+    doc.add_heading('Sensitivity Analysis', 1)
+
+    intro = doc.add_paragraph()
+    intro.add_run(
+        'Sensitivity analysis identifies which risks contribute most to overall portfolio uncertainty. '
+        'This helps prioritize risk management efforts on the risks that matter most.'
+    )
+
+    # Key findings
+    top_risk = sensitivity_df.iloc[0]
+    risks_80 = (sensitivity_df['Cumulative %'] <= 80).sum()
+
+    findings = doc.add_paragraph()
+    findings.add_run('Key Findings:\n').bold = True
+    findings.add_run(
+        f'• The top risk driver (Risk {top_risk["Risk ID"]}) accounts for {top_risk["Variance %"]:.1f}% of total variance\n'
+        f'• Just {risks_80} risks drive 80% of the portfolio uncertainty\n'
+        f'• This follows the Pareto principle (80/20 rule) for risk concentration\n'
+    )
+
+    # Pareto chart
+    if pareto_img:
+        doc.add_heading('Pareto Chart', 2)
+        desc = doc.add_paragraph()
+        desc.add_run(
+            'The Pareto chart shows the cumulative contribution of each risk to total variance, '
+            'helping identify the "vital few" risks that require focused attention.'
+        )
+        doc.add_picture(pareto_img, width=Inches(6.5))
+
+    # Top 10 risks table
+    doc.add_heading('Top 10 Risk Drivers', 2)
+
+    table = doc.add_table(rows=11, cols=4)
+    table.style = 'Light Grid Accent 1'
+
+    # Headers
+    headers = ['Risk ID', 'Description', 'Variance %', 'Cumulative %']
+    for i, header in enumerate(headers):
+        table.rows[0].cells[i].text = header
+        table.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
+
+    # Data
+    for i, (_, risk) in enumerate(sensitivity_df.head(10).iterrows(), 1):
+        table.rows[i].cells[0].text = str(risk['Risk ID'])
+        table.rows[i].cells[1].text = risk['Risk Description'][:50] + ('...' if len(risk['Risk Description']) > 50 else '')
+        table.rows[i].cells[2].text = f'{risk["Variance %"]:.2f}%'
+        table.rows[i].cells[3].text = f'{risk["Cumulative %"]:.1f}%'
+
+    doc.add_page_break()
+
+def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
+    """Add mitigation cost-benefit analysis section"""
+    from docx.shared import Inches
+
+    doc.add_heading('Mitigation Cost-Benefit Analysis', 1)
+
+    df_with_measures = df_with_roi[df_with_roi['Cost of Measures_Value'] > 0]
+
+    if len(df_with_measures) > 0:
+        # Summary metrics
+        total_reduction = df_with_measures['Risk_Reduction'].sum()
+        total_cost = df_with_measures['Cost of Measures_Value'].sum()
+        net_benefit = total_reduction - total_cost
+
+        summary = doc.add_paragraph()
+        summary.add_run('Mitigation Summary:\n').bold = True
+        summary.add_run(
+            f'• Total Risk Reduction: {total_reduction/1e6:.2f} Million CHF\n'
+            f'• Total Mitigation Cost: {total_cost/1e6:.2f} Million CHF\n'
+            f'• Net Benefit: {net_benefit/1e6:.2f} Million CHF\n'
+            f'• Benefit/Cost Ratio: {total_reduction/total_cost:.2f}\n'
+        )
+
+        # ROI chart
+        if roi_chart_img:
+            doc.add_heading('Return on Investment', 2)
+            doc.add_picture(roi_chart_img, width=Inches(6))
+
+        # Top ROI opportunities table
+        doc.add_heading('Top 10 Mitigation Opportunities', 2)
+
+        top_roi = df_with_measures.nlargest(10, 'ROI')
+
+        table = doc.add_table(rows=11, cols=5)
+        table.style = 'Light Grid Accent 1'
+
+        # Headers
+        headers = ['Risk ID', 'Description', 'Risk Reduction (M CHF)', 'Cost (M CHF)', 'ROI %']
+        for i, header in enumerate(headers):
+            table.rows[0].cells[i].text = header
+            table.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
+
+        # Data
+        for i, (_, risk) in enumerate(top_roi.iterrows(), 1):
+            table.rows[i].cells[0].text = str(risk['Risk ID'])
+            table.rows[i].cells[1].text = risk['Risk Description'][:40] + ('...' if len(risk['Risk Description']) > 40 else '')
+            table.rows[i].cells[2].text = f'{risk["Risk_Reduction"]/1e6:.2f}'
+            table.rows[i].cells[3].text = f'{risk["Cost of Measures_Value"]/1e6:.2f}'
+            table.rows[i].cells[4].text = f'{risk["ROI"]:.1f}%'
+    else:
+        doc.add_paragraph('No mitigation measures defined in the risk register.')
+
+    doc.add_page_break()
+
+def add_docx_risk_register_appendix(doc, df):
+    """Add full risk register as appendix"""
+
+    doc.add_heading('Appendix A: Risk Register', 1)
+
+    # Create table
+    display_cols = ['Risk ID', 'Risk Description', 'Initial risk_Value', 'Initial_Likelihood',
+                   'Residual risk_Value', 'Residual_Likelihood', 'Cost of Measures_Value']
+
+    table = doc.add_table(rows=len(df) + 1, cols=len(display_cols))
+    table.style = 'Light Grid Accent 1'
+
+    # Headers
+    headers = ['Risk ID', 'Description', 'Initial Risk (CHF)', 'Initial Likelihood',
+               'Residual Risk (CHF)', 'Residual Likelihood', 'Mitigation Cost (CHF)']
+    for i, header in enumerate(headers):
+        table.rows[0].cells[i].text = header
+        table.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
+
+    # Data
+    for i, (_, risk) in enumerate(df.iterrows(), 1):
+        table.rows[i].cells[0].text = str(risk['Risk ID'])
+        table.rows[i].cells[1].text = risk['Risk Description'][:60] + ('...' if len(risk['Risk Description']) > 60 else '')
+        table.rows[i].cells[2].text = f'{risk["Initial risk_Value"]:,.0f}'
+        table.rows[i].cells[3].text = f'{risk["Initial_Likelihood"]:.1%}'
+        table.rows[i].cells[4].text = f'{risk["Residual risk_Value"]:,.0f}'
+        table.rows[i].cells[5].text = f'{risk["Residual_Likelihood"]:.1%}'
+        table.rows[i].cells[6].text = f'{risk["Cost of Measures_Value"]:,.0f}'
+
+    doc.add_page_break()
+
+def add_docx_methodology_appendix(doc, n_simulations, confidence_level):
+    """Add methodology explanation appendix"""
+
+    doc.add_heading('Appendix B: Methodology', 1)
+
+    # Monte Carlo explanation
+    doc.add_heading('Monte Carlo Simulation', 2)
+    mc_para = doc.add_paragraph()
+    mc_para.add_run(
+        f'This analysis uses Monte Carlo simulation with {n_simulations:,} iterations to model '
+        f'the probabilistic distribution of total risk exposure. For each iteration:\n'
+    )
+
+    steps = [
+        'Each risk is evaluated independently based on its likelihood of occurrence',
+        'Risks that "occur" in the simulation contribute their impact to the total',
+        'The simulation aggregates all occurring risks to calculate total portfolio exposure',
+        'This process repeats thousands of times to build a statistical distribution'
+    ]
+
+    for step in steps:
+        doc.add_paragraph(step, style='List Bullet')
+
+    # Confidence level explanation
+    doc.add_heading('Confidence Levels', 2)
+    conf_para = doc.add_paragraph()
+    conf_para.add_run(
+        f'The selected {confidence_level} confidence level represents a percentile of the risk distribution:\n'
+    )
+
+    conf_meanings = {
+        'P50': 'There is a 50% probability that actual risk exposure will be at or below this value (median/expected value)',
+        'P80': 'There is an 80% probability that actual risk exposure will be at or below this value (moderately conservative)',
+        'P95': 'There is a 95% probability that actual risk exposure will be at or below this value (very conservative, suitable for contingency planning)'
+    }
+
+    for level, meaning in conf_meanings.items():
+        marker = ' ★ (Selected)' if level == confidence_level else ''
+        para = doc.add_paragraph(style='List Bullet')
+        para.add_run(f'{level}{marker}: ').bold = True
+        para.add_run(meaning)
+
+    # Sensitivity analysis explanation
+    doc.add_heading('Sensitivity Analysis', 2)
+    sens_para = doc.add_paragraph()
+    sens_para.add_run(
+        'Sensitivity analysis uses variance decomposition to identify which risks contribute most '
+        'to overall portfolio uncertainty. The methodology:\n'
+    )
+
+    sens_steps = [
+        'Run baseline simulation with all risks',
+        'For each risk, run simulation with that risk removed',
+        'Calculate variance reduction when the risk is removed',
+        'Risks with higher variance contribution are the main drivers of uncertainty'
+    ]
+
+    for step in sens_steps:
+        doc.add_paragraph(step, style='List Bullet')
+
+def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensitivity_df,
+                        initial_results, residual_results, n_simulations, confidence_level):
+    """
+    Generate comprehensive DOCX report with embedded charts
+
+    Returns:
+        BytesIO object containing the Word document
+    """
+    from docx import Document
+
+    doc = Document()
+
+    # Add cover page
+    add_docx_cover_page(doc, confidence_level)
+
+    # Add executive summary
+    add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidence_level)
+
+    # Generate and embed charts
+    with st.spinner("Generating risk matrix chart..."):
+        risk_matrix_fig = create_risk_matrix(df, 'initial')
+        risk_matrix_img = plotly_to_image_bytes(risk_matrix_fig, width=1600, height=800)
+
+    add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img)
+
+    # Monte Carlo section with charts
+    with st.spinner("Generating Monte Carlo charts..."):
+        cdf_fig = create_cdf_plot(initial_results, initial_stats, 'initial', confidence_level)
+        cdf_img = plotly_to_image_bytes(cdf_fig, width=1600, height=600)
+
+        hist_fig = create_histogram(initial_results, initial_stats, 'initial')
+        hist_img = plotly_to_image_bytes(hist_fig, width=1600, height=600)
+
+    add_docx_monte_carlo_section(doc, n_simulations, cdf_img, hist_img)
+
+    # Sensitivity section with Pareto chart
+    with st.spinner("Generating sensitivity analysis chart..."):
+        pareto_fig = create_pareto_chart(sensitivity_df, top_n=20)
+        pareto_img = plotly_to_image_bytes(pareto_fig, width=1600, height=800)
+
+    add_docx_sensitivity_section(doc, sensitivity_df, pareto_img)
+
+    # Mitigation section with ROI chart
+    with st.spinner("Generating mitigation analysis chart..."):
+        df_with_measures = df_with_roi[df_with_roi['Cost of Measures_Value'] > 0]
+        if len(df_with_measures) > 0:
+            df_roi_sorted = df_with_measures.nlargest(20, 'ROI')
+            roi_fig = px.bar(df_roi_sorted,
+                            x='ROI',
+                            y='Risk Description',
+                            orientation='h',
+                            title='Top 20 Mitigation Measures by ROI (%)',
+                            color='ROI',
+                            color_continuous_scale='RdYlGn')
+            roi_fig.update_layout(height=600, yaxis={'categoryorder': 'total ascending'})
+            roi_img = plotly_to_image_bytes(roi_fig, width=1600, height=600)
+        else:
+            roi_img = None
+
+    add_docx_mitigation_section(doc, df_with_roi, roi_img)
+
+    # Appendices
+    add_docx_risk_register_appendix(doc, df)
+    add_docx_methodology_appendix(doc, n_simulations, confidence_level)
+
+    # Save to BytesIO
+    docx_bytes = io.BytesIO()
+    doc.save(docx_bytes)
+    docx_bytes.seek(0)
+
+    return docx_bytes
+
 # Main application
 def main():
     # Sidebar
@@ -1414,7 +1893,64 @@ def main():
                 )
             
             st.markdown("---")
-            
+
+            # Professional DOCX Report
+            st.subheader("📄 Professional DOCX Report")
+            st.write("Generate a comprehensive Word document with executive summary, embedded charts, and detailed analysis.")
+
+            col_docx1, col_docx2, col_docx3 = st.columns([1, 2, 1])
+
+            with col_docx2:
+                if st.button("🎨 Generate Professional DOCX Report", type="primary", use_container_width=True):
+                    with st.spinner("📄 Generating comprehensive DOCX report... This may take 30-60 seconds"):
+                        try:
+                            # Get sensitivity data
+                            sensitivity_df = st.session_state.get('sensitivity_df')
+
+                            if sensitivity_df is None:
+                                st.error("❌ Sensitivity analysis data not found. Please run the simulation first.")
+                            else:
+                                # Generate the DOCX report
+                                docx_report = generate_docx_report(
+                                    initial_stats=initial_stats,
+                                    residual_stats=residual_stats,
+                                    df=df,
+                                    df_with_roi=df_with_roi,
+                                    sensitivity_df=sensitivity_df,
+                                    initial_results=initial_results,
+                                    residual_results=residual_results,
+                                    n_simulations=n_simulations,
+                                    confidence_level=confidence_level
+                                )
+
+                                st.success("✅ DOCX report generated successfully!")
+
+                                st.download_button(
+                                    label="📥 Download Professional Report (DOCX)",
+                                    data=docx_report,
+                                    file_name=f"risk_assessment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    use_container_width=True
+                                )
+
+                        except Exception as e:
+                            st.error(f"❌ Error generating DOCX report: {str(e)}")
+                            st.write("Please ensure all required libraries are installed: `pip install python-docx kaleido`")
+
+            st.info("""
+                **📋 Report Contents:**
+                - ✅ Professional cover page with branding
+                - ✅ Executive summary with key metrics and top risks
+                - ✅ Risk portfolio overview with embedded charts
+                - ✅ Monte Carlo simulation results with CDF and histograms
+                - ✅ Sensitivity analysis with Pareto chart
+                - ✅ Mitigation cost-benefit analysis with ROI charts
+                - ✅ Full risk register appendix
+                - ✅ Methodology explanation appendix
+            """)
+
+            st.markdown("---")
+
             # Summary report
             st.subheader("📋 Summary Report")
 
