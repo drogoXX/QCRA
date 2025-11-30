@@ -869,11 +869,169 @@ def format_table_professional(table, has_header=True):
                     run.font.name = 'Calibri'
                     run.font.color.rgb = RGBColor(0, 0, 0)
 
+def format_table_executive(table, has_header=True, highlight_rows=None):
+    """Apply executive-level professional formatting to summary tables with enhanced styling"""
+    from docx.shared import Pt, RGBColor, Inches, Twips
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    highlight_rows = highlight_rows or []
+
+    # Set table alignment to center
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # Apply table borders
+    tbl = table._tbl
+    tblPr = tbl.tblPr if tbl.tblPr is not None else OxmlElement('w:tblPr')
+    tblBorders = OxmlElement('w:tblBorders')
+
+    for border_name in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
+        border = OxmlElement(f'w:{border_name}')
+        border.set(qn('w:val'), 'single')
+        border.set(qn('w:sz'), '4')
+        border.set(qn('w:color'), '1F4E78')
+        tblBorders.append(border)
+
+    tblPr.append(tblBorders)
+    if tbl.tblPr is None:
+        tbl.insert(0, tblPr)
+
+    # Format cells
+    for row in table.rows:
+        for cell in row.cells:
+            cell.vertical_alignment = 1  # Center vertically
+
+    if has_header and len(table.rows) > 0:
+        # Format header row with gradient-style professional look
+        for cell in table.rows[0].cells:
+            set_cell_background(cell, "1F4E78")  # Dark blue
+            # Add bottom border emphasis
+            set_cell_border(cell, bottom={'sz': 12, 'val': 'single', 'color': '0D2E4D'})
+            for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in paragraph.runs:
+                    run.font.bold = True
+                    run.font.size = Pt(11)
+                    run.font.color.rgb = RGBColor(255, 255, 255)
+                    run.font.name = 'Calibri'
+
+    # Format data rows
+    for i, row in enumerate(table.rows[1:], 1):
+        is_highlight = i in highlight_rows
+
+        if is_highlight:
+            bg_color = "D4EDFC"  # Light blue highlight
+        elif i % 2 == 0:
+            bg_color = "F8F9FA"  # Very light gray
+        else:
+            bg_color = "FFFFFF"  # White
+
+        for j, cell in enumerate(row.cells):
+            set_cell_background(cell, bg_color)
+            for paragraph in cell.paragraphs:
+                # Right-align numeric columns (typically not the first column)
+                if j > 0:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                for run in paragraph.runs:
+                    run.font.size = Pt(10)
+                    run.font.name = 'Calibri'
+                    run.font.color.rgb = RGBColor(0, 0, 0)
+                    if is_highlight:
+                        run.font.bold = True
+
+def format_table_contingency(table):
+    """Apply special formatting for contingency allocation summary table"""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    # Set table alignment
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # Apply thick table borders
+    tbl = table._tbl
+    tblPr = tbl.tblPr if tbl.tblPr is not None else OxmlElement('w:tblPr')
+    tblBorders = OxmlElement('w:tblBorders')
+
+    for border_name in ['top', 'left', 'bottom', 'right']:
+        border = OxmlElement(f'w:{border_name}')
+        border.set(qn('w:val'), 'single')
+        border.set(qn('w:sz'), '12')  # Thicker outer border
+        border.set(qn('w:color'), '1F4E78')
+        tblBorders.append(border)
+
+    for border_name in ['insideH', 'insideV']:
+        border = OxmlElement(f'w:{border_name}')
+        border.set(qn('w:val'), 'single')
+        border.set(qn('w:sz'), '4')
+        border.set(qn('w:color'), 'B4C6E7')  # Lighter internal borders
+        tblBorders.append(border)
+
+    tblPr.append(tblBorders)
+    if tbl.tblPr is None:
+        tbl.insert(0, tblPr)
+
+    for row in table.rows:
+        for cell in row.cells:
+            cell.vertical_alignment = 1
+
+    # Format header row
+    if len(table.rows) > 0:
+        for cell in table.rows[0].cells:
+            set_cell_background(cell, "1F4E78")
+            for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in paragraph.runs:
+                    run.font.bold = True
+                    run.font.size = Pt(12)
+                    run.font.color.rgb = RGBColor(255, 255, 255)
+                    run.font.name = 'Calibri'
+
+    # Format data rows with special styling
+    row_styles = [
+        ("E8F4FD", False),   # Row 1: Light blue - Residual Risk Reserve
+        ("E8F4FD", False),   # Row 2: Light blue - Mitigation Cost
+        ("D4EDFC", True),    # Row 3: Medium blue - Subtotal
+        ("FFF3CD", False),   # Row 4: Light amber - Management Reserve
+        ("1F4E78", True),    # Row 5: Dark blue - Total Contingency (header-style)
+    ]
+
+    for i, row in enumerate(table.rows[1:], 0):
+        if i < len(row_styles):
+            bg_color, is_bold = row_styles[i]
+        else:
+            bg_color, is_bold = ("FFFFFF", False)
+
+        for j, cell in enumerate(row.cells):
+            set_cell_background(cell, bg_color)
+            for paragraph in cell.paragraphs:
+                if j > 0:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                for run in paragraph.runs:
+                    run.font.size = Pt(11)
+                    run.font.name = 'Calibri'
+                    run.font.bold = is_bold
+                    # White text for dark row
+                    if bg_color == "1F4E78":
+                        run.font.color.rgb = RGBColor(255, 255, 255)
+                    else:
+                        run.font.color.rgb = RGBColor(0, 0, 0)
+
 def plotly_to_image_bytes(fig, width=1600, height=800):
-    """Convert Plotly figure to PNG image bytes - OPTIONAL, returns None if not available"""
-    # Charts are now optional - report will work fine without them
-    # This avoids Chrome/kaleido dependency
-    return None
+    """Convert Plotly figure to PNG image bytes using kaleido"""
+    try:
+        import io
+        # Use kaleido for server-side rendering (lightweight, no browser needed)
+        img_bytes = fig.to_image(format="png", width=width, height=height, scale=2)
+        return io.BytesIO(img_bytes)
+    except Exception as e:
+        # Fall back gracefully if kaleido is not available
+        st.warning(f"Chart export not available: {str(e)}. Install kaleido: pip install kaleido")
+        return None
 
 def add_docx_cover_page(doc, confidence_level):
     """Add professional cover page to DOCX report"""
@@ -945,11 +1103,18 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
         run.font.name = 'Calibri'
         run.font.color.rgb = RGBColor(31, 78, 120)
 
-    # Get selected confidence values
+    # Get selected confidence values (probabilistic)
     initial_selected = get_confidence_value(initial_stats, confidence_level)
     residual_selected = get_confidence_value(residual_stats, confidence_level)
     risk_reduction_selected = initial_selected - residual_selected
     risk_reduction_pct = (risk_reduction_selected / initial_selected * 100) if initial_selected > 0 else 0
+
+    # Calculate deterministic values (sum of expected values)
+    initial_ev_total = df['Initial_EV'].sum()
+    residual_ev_total = df['Residual_EV'].sum()
+    deterministic_reduction = initial_ev_total - residual_ev_total
+    deterministic_reduction_pct = (deterministic_reduction / initial_ev_total * 100) if initial_ev_total > 0 else 0
+    total_mitigation_cost = df['Cost of Measures_Value'].sum()
 
     # Key findings paragraph
     intro = doc.add_paragraph()
@@ -960,41 +1125,87 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
 
     intro_text = intro.add_run(
         f'This risk assessment analyzes {len(df)} identified risks using Monte Carlo simulation '
-        f'with {confidence_level} confidence level. The analysis provides probabilistic estimates '
-        f'of total risk exposure and evaluates the effectiveness of planned mitigation measures.'
+        f'with {confidence_level} confidence level. The analysis provides both deterministic (expected value) '
+        f'and probabilistic estimates of total risk exposure, evaluating the effectiveness of planned mitigation measures.'
     )
     intro_text.font.name = 'Calibri'
     intro_text.font.size = Pt(11)
 
     doc.add_paragraph()  # Spacing
 
-    # Primary metrics
-    metrics_heading = doc.add_heading('Key Risk Metrics', 2)
-    for run in metrics_heading.runs:
+    # ========== DETERMINISTIC METRICS SECTION ==========
+    det_heading = doc.add_heading('Deterministic Risk Metrics (Expected Values)', 2)
+    for run in det_heading.runs:
         run.font.name = 'Calibri'
         run.font.color.rgb = RGBColor(31, 78, 120)
 
-    # Create table for key metrics with professional formatting
-    table = doc.add_table(rows=6, cols=2)
+    det_intro = doc.add_paragraph()
+    det_intro_run = det_intro.add_run(
+        'The deterministic analysis calculates risk exposure as the sum of individual expected values '
+        '(Impact × Likelihood) for each risk. This provides a baseline estimate assuming average outcomes.'
+    )
+    det_intro_run.font.name = 'Calibri'
+    det_intro_run.font.size = Pt(10)
+    det_intro_run.font.italic = True
+    det_intro_run.font.color.rgb = RGBColor(89, 89, 89)
 
-    # Headers
-    table.rows[0].cells[0].text = 'Metric'
-    table.rows[0].cells[1].text = 'Value'
+    # Create table for deterministic metrics
+    det_table = doc.add_table(rows=5, cols=2)
 
-    metrics = [
-        ('Initial Risk Exposure', f'{initial_selected/1e6:.2f} Million CHF'),
-        ('Residual Risk Exposure', f'{residual_selected/1e6:.2f} Million CHF'),
-        (f'Portfolio Risk Reduction ({confidence_level})', f'{risk_reduction_selected/1e6:.2f} Million CHF ({risk_reduction_pct:.1f}%)'),
-        ('Total Mitigation Cost', f'{df["Cost of Measures_Value"].sum()/1e6:.2f} Million CHF'),
-        (f'Net Benefit ({confidence_level})', f'{(risk_reduction_selected - df["Cost of Measures_Value"].sum())/1e6:.2f} Million CHF')
+    det_table.rows[0].cells[0].text = 'Deterministic Metric'
+    det_table.rows[0].cells[1].text = 'Value (Million CHF)'
+
+    det_metrics = [
+        ('Initial Risk Exposure (Σ EV)', f'{initial_ev_total/1e6:.2f}'),
+        ('Residual Risk Exposure (Σ EV)', f'{residual_ev_total/1e6:.2f}'),
+        ('Risk Reduction (Σ EV)', f'{deterministic_reduction/1e6:.2f} ({deterministic_reduction_pct:.1f}%)'),
+        ('Total Mitigation Investment', f'{total_mitigation_cost/1e6:.2f}'),
     ]
 
-    for i, (metric, value) in enumerate(metrics, 1):
-        table.rows[i].cells[0].text = metric
-        table.rows[i].cells[1].text = value
+    for i, (metric, value) in enumerate(det_metrics, 1):
+        det_table.rows[i].cells[0].text = metric
+        det_table.rows[i].cells[1].text = value
 
-    # Apply professional formatting
-    format_table_professional(table, has_header=True)
+    format_table_executive(det_table, has_header=True, highlight_rows=[3])
+
+    doc.add_paragraph()  # Spacing
+
+    # ========== PROBABILISTIC METRICS SECTION ==========
+    prob_heading = doc.add_heading(f'Probabilistic Risk Metrics ({confidence_level} Confidence)', 2)
+    for run in prob_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    prob_intro = doc.add_paragraph()
+    prob_intro_run = prob_intro.add_run(
+        f'The probabilistic analysis uses Monte Carlo simulation to model portfolio-level risk exposure. '
+        f'The {confidence_level} percentile indicates {confidence_level[1:]}% probability that actual exposure '
+        f'will not exceed this value, accounting for risk correlations and uncertainty.'
+    )
+    prob_intro_run.font.name = 'Calibri'
+    prob_intro_run.font.size = Pt(10)
+    prob_intro_run.font.italic = True
+    prob_intro_run.font.color.rgb = RGBColor(89, 89, 89)
+
+    # Create table for probabilistic metrics
+    prob_table = doc.add_table(rows=6, cols=2)
+
+    prob_table.rows[0].cells[0].text = f'Probabilistic Metric ({confidence_level})'
+    prob_table.rows[0].cells[1].text = 'Value (Million CHF)'
+
+    prob_metrics = [
+        (f'Initial Risk Exposure ({confidence_level})', f'{initial_selected/1e6:.2f}'),
+        (f'Residual Risk Exposure ({confidence_level})', f'{residual_selected/1e6:.2f}'),
+        (f'Portfolio Risk Reduction', f'{risk_reduction_selected/1e6:.2f} ({risk_reduction_pct:.1f}%)'),
+        ('Total Mitigation Investment', f'{total_mitigation_cost/1e6:.2f}'),
+        (f'Net Benefit ({confidence_level})', f'{(risk_reduction_selected - total_mitigation_cost)/1e6:.2f}'),
+    ]
+
+    for i, (metric, value) in enumerate(prob_metrics, 1):
+        prob_table.rows[i].cells[0].text = metric
+        prob_table.rows[i].cells[1].text = value
+
+    format_table_executive(prob_table, has_header=True, highlight_rows=[3, 5])
 
     doc.add_paragraph()  # Spacing
 
@@ -1020,23 +1231,186 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
             f'(Expected Value: {risk["Initial_EV"]/1e6:.2f}M CHF)'
         )
 
-    # Recommendations
-    doc.add_heading('Recommendations', 2)
+    doc.add_page_break()
 
-    rec_para = doc.add_paragraph()
-    rec_para.add_run(
-        f'Based on the {confidence_level} confidence level analysis, it is recommended to:\n'
+def add_docx_contingency_section(doc, initial_stats, residual_stats, df, confidence_level):
+    """Add contingency allocation section with professional summary table and narrative"""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Section heading
+    heading = doc.add_heading('Project Risk Contingency Allocation', 1)
+    for run in heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Get values
+    residual_selected = get_confidence_value(residual_stats, confidence_level)
+    total_mitigation_cost = df['Cost of Measures_Value'].sum()
+
+    # Calculate management reserve (difference between P95 and selected percentile for additional buffer)
+    residual_p95 = residual_stats['p95']
+    residual_p80 = residual_stats['p80']
+    residual_p50 = residual_stats['p50']
+
+    # Management reserve based on risk profile
+    if confidence_level == 'P95':
+        management_reserve = residual_selected * 0.10  # 10% buffer for P95
+        reserve_explanation = "conservative"
+    elif confidence_level == 'P80':
+        management_reserve = residual_p95 - residual_selected  # Gap to P95
+        reserve_explanation = "moderate"
+    else:  # P50
+        management_reserve = residual_p80 - residual_selected  # Gap to P80
+        reserve_explanation = "optimistic"
+
+    subtotal = residual_selected + total_mitigation_cost
+    total_contingency = subtotal + management_reserve
+
+    # Introductory narrative
+    intro = doc.add_paragraph()
+    intro_bold = intro.add_run('Contingency Planning Framework: ')
+    intro_bold.bold = True
+    intro_bold.font.name = 'Calibri'
+    intro_bold.font.size = Pt(11)
+
+    intro_text = intro.add_run(
+        f'Based on the {confidence_level} confidence level analysis, the following contingency allocation '
+        f'is recommended to adequately cover identified project risks. This allocation should be reviewed '
+        f'and approved by the Board of Directors before project commitment.'
     )
+    intro_text.font.name = 'Calibri'
+    intro_text.font.size = Pt(11)
 
-    recommendations = [
-        f'Reserve at least {residual_selected/1e6:.2f} Million CHF for residual risk exposure',
-        f'Focus mitigation efforts on the top {min(10, len(df))} risks which drive most uncertainty',
-        'Monitor risks with schedule impact closely as they may cause project delays',
-        'Review and update risk assessments quarterly to reflect changing conditions'
+    doc.add_paragraph()
+
+    # ========== CONTINGENCY ALLOCATION TABLE ==========
+    table_heading = doc.add_heading('Recommended Contingency Allocation', 2)
+    for run in table_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Create the professional contingency table
+    table = doc.add_table(rows=6, cols=3)
+
+    # Headers
+    table.rows[0].cells[0].text = 'Component'
+    table.rows[0].cells[1].text = 'Amount (M CHF)'
+    table.rows[0].cells[2].text = 'Description'
+
+    # Data rows
+    table_data = [
+        ('Residual Risk Reserve', f'{residual_selected/1e6:.2f}',
+         f'{confidence_level} probabilistic exposure after mitigation'),
+        ('Mitigation Investment', f'{total_mitigation_cost/1e6:.2f}',
+         'Total cost of planned risk mitigation measures'),
+        ('Subtotal (Base Contingency)', f'{subtotal/1e6:.2f}',
+         'Minimum required project risk contingency'),
+        ('Management Reserve', f'{management_reserve/1e6:.2f}',
+         f'Additional buffer for {reserve_explanation} risk profile'),
+        ('TOTAL PROJECT CONTINGENCY', f'{total_contingency/1e6:.2f}',
+         'Recommended allocation for BoD approval'),
     ]
 
-    for rec in recommendations:
-        rec_item = doc.add_paragraph(rec, style='List Bullet')
+    for i, (component, amount, description) in enumerate(table_data, 1):
+        table.rows[i].cells[0].text = component
+        table.rows[i].cells[1].text = amount
+        table.rows[i].cells[2].text = description
+
+    # Apply special contingency formatting
+    format_table_contingency(table)
+
+    doc.add_paragraph()
+
+    # ========== PERCENTILE SELECTION NARRATIVE ==========
+    narrative_heading = doc.add_heading('Understanding the Selected Confidence Level', 2)
+    for run in narrative_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Confidence level explanation
+    if confidence_level == 'P50':
+        conf_explanation = (
+            'The P50 (median) confidence level represents a 50% probability that actual risk exposure '
+            'will not exceed this value. This is considered an optimistic estimate suitable for projects '
+            'with high risk tolerance, strong risk management capabilities, or where cost constraints '
+            'require accepting higher uncertainty. Organizations selecting P50 should maintain robust '
+            'contingency access mechanisms and be prepared for potential cost overruns.'
+        )
+        profile_assessment = 'Optimistic / High Risk Tolerance'
+        profile_color = RGBColor(230, 126, 34)  # Orange
+    elif confidence_level == 'P80':
+        conf_explanation = (
+            'The P80 confidence level represents an 80% probability that actual risk exposure '
+            'will not exceed this value. This is considered a balanced, moderately conservative estimate '
+            'suitable for most commercial and infrastructure projects. P80 provides reasonable protection '
+            'against adverse outcomes while avoiding excessive contingency that could impact project viability. '
+            'This level is commonly adopted as industry best practice for major capital projects.'
+        )
+        profile_assessment = 'Balanced / Moderate Risk Profile'
+        profile_color = RGBColor(41, 128, 185)  # Blue
+    else:  # P95
+        conf_explanation = (
+            'The P95 confidence level represents a 95% probability that actual risk exposure '
+            'will not exceed this value. This is a conservative estimate suitable for projects with '
+            'low risk tolerance, regulatory constraints, fixed-price contracts, or critical infrastructure. '
+            'While P95 provides high confidence in budget adequacy, it may result in higher contingency '
+            'allocation that could affect project economics or competitiveness.'
+        )
+        profile_assessment = 'Conservative / Low Risk Tolerance'
+        profile_color = RGBColor(39, 174, 96)  # Green
+
+    conf_para = doc.add_paragraph()
+    conf_para.add_run(conf_explanation).font.name = 'Calibri'
+
+    doc.add_paragraph()
+
+    # Risk profile box
+    profile_para = doc.add_paragraph()
+    profile_label = profile_para.add_run('Project Risk Profile Assessment: ')
+    profile_label.bold = True
+    profile_label.font.name = 'Calibri'
+    profile_label.font.size = Pt(11)
+
+    profile_value = profile_para.add_run(profile_assessment)
+    profile_value.bold = True
+    profile_value.font.name = 'Calibri'
+    profile_value.font.size = Pt(12)
+    profile_value.font.color.rgb = profile_color
+
+    doc.add_paragraph()
+
+    # ========== CONTINGENCY ALLOCATION GUIDANCE ==========
+    guidance_heading = doc.add_heading('Contingency Allocation Guidance', 2)
+    for run in guidance_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    guidance_intro = doc.add_paragraph()
+    guidance_intro.add_run(
+        'The recommended contingency should be allocated and managed according to the following principles:'
+    ).font.name = 'Calibri'
+
+    guidance_items = [
+        ('Governance: ', 'Contingency release should require formal change control approval, with clear '
+         'thresholds for project manager, steering committee, and Board authorization levels.'),
+        ('Monitoring: ', 'Track contingency drawdown against risk realization. If drawdown exceeds '
+         'forecast early in the project, escalate for review and potential replenishment.'),
+        ('Risk-Based Release: ', 'Link contingency release to specific risk events rather than '
+         'general cost growth. Maintain traceability between risks and contingency utilization.'),
+        ('Periodic Review: ', 'Reassess risk exposure quarterly. As risks are retired or new risks '
+         'emerge, adjust the contingency forecast and communicate changes to stakeholders.'),
+        ('Residual Contingency: ', 'Unused contingency at project completion may be returned to '
+         'corporate reserves or reallocated per organizational policy.')
+    ]
+
+    for title, content in guidance_items:
+        item_para = doc.add_paragraph(style='List Bullet')
+        item_title = item_para.add_run(title)
+        item_title.bold = True
+        item_title.font.name = 'Calibri'
+        item_content = item_para.add_run(content)
+        item_content.font.name = 'Calibri'
 
     doc.add_page_break()
 
@@ -1399,6 +1773,9 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
 
     # Add executive summary
     add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidence_level)
+
+    # Add contingency allocation section
+    add_docx_contingency_section(doc, initial_stats, residual_stats, df, confidence_level)
 
     # Generate and embed charts
     with st.spinner("Generating risk matrix chart..."):
