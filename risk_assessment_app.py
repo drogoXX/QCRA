@@ -984,9 +984,9 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
     metrics = [
         ('Initial Risk Exposure', f'{initial_selected/1e6:.2f} Million CHF'),
         ('Residual Risk Exposure', f'{residual_selected/1e6:.2f} Million CHF'),
-        ('Risk Reduction', f'{risk_reduction_selected/1e6:.2f} Million CHF ({risk_reduction_pct:.1f}%)'),
+        (f'Portfolio Risk Reduction ({confidence_level})', f'{risk_reduction_selected/1e6:.2f} Million CHF ({risk_reduction_pct:.1f}%)'),
         ('Total Mitigation Cost', f'{df["Cost of Measures_Value"].sum()/1e6:.2f} Million CHF'),
-        ('Net Benefit', f'{(risk_reduction_selected - df["Cost of Measures_Value"].sum())/1e6:.2f} Million CHF')
+        (f'Net Benefit ({confidence_level})', f'{(risk_reduction_selected - df["Cost of Measures_Value"].sum())/1e6:.2f} Million CHF')
     ]
 
     for i, (metric, value) in enumerate(metrics, 1):
@@ -1176,7 +1176,7 @@ def add_docx_sensitivity_section(doc, sensitivity_df, pareto_img=None):
 
 def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
     """Add mitigation cost-benefit analysis section"""
-    from docx.shared import Inches
+    from docx.shared import Inches, Pt, RGBColor
 
     doc.add_heading('Mitigation Cost-Benefit Analysis', 1)
 
@@ -1189,13 +1189,32 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
         net_benefit = total_reduction - total_cost
 
         summary = doc.add_paragraph()
-        summary.add_run('Mitigation Summary:\n').bold = True
-        summary.add_run(
-            f'• Total Risk Reduction: {total_reduction/1e6:.2f} Million CHF\n'
+        summary_title = summary.add_run('Mitigation Summary:\n')
+        summary_title.bold = True
+        summary_title.font.name = 'Calibri'
+        summary_title.font.size = Pt(11)
+
+        summary_text = summary.add_run(
+            f'• Expected Value Reduction (Mean): {total_reduction/1e6:.2f} Million CHF\n'
             f'• Total Mitigation Cost: {total_cost/1e6:.2f} Million CHF\n'
-            f'• Net Benefit: {net_benefit/1e6:.2f} Million CHF\n'
+            f'• Net Benefit (Mean): {net_benefit/1e6:.2f} Million CHF\n'
             f'• Benefit/Cost Ratio: {total_reduction/total_cost:.2f}\n'
         )
+        summary_text.font.name = 'Calibri'
+        summary_text.font.size = Pt(11)
+
+        # Add explanation note
+        doc.add_paragraph()
+        note = doc.add_paragraph()
+        note_run = note.add_run(
+            'Note: These values represent the sum of individual risk Expected Values (Impact × Likelihood). '
+            'This differs from the portfolio-level Monte Carlo percentiles shown in the Executive Summary, '
+            'which account for probabilistic portfolio effects and correlations.'
+        )
+        note_run.font.size = Pt(9)
+        note_run.font.name = 'Calibri'
+        note_run.font.italic = True
+        note_run.font.color.rgb = RGBColor(89, 89, 89)
 
         # ROI chart
         if roi_chart_img:
