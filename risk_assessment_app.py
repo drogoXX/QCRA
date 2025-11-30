@@ -1231,6 +1231,7 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
 
 def add_docx_risk_register_appendix(doc, df):
     """Add full risk register as appendix"""
+    from docx.shared import Pt
 
     doc.add_heading('Appendix A: Risk Register', 1)
 
@@ -2060,7 +2061,9 @@ def main():
 
                         except Exception as e:
                             st.error(f"❌ Error generating DOCX report: {str(e)}")
-                            st.write("Please ensure all required libraries are installed: `pip install python-docx kaleido`")
+                            st.write("Please ensure all required libraries are installed: `pip install python-docx`")
+                            import traceback
+                            st.code(traceback.format_exc())
 
             st.info("""
                 **📋 Report Contents:**
