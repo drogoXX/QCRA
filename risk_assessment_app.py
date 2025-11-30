@@ -1032,6 +1032,80 @@ def plotly_to_image_bytes(fig, width=1600, height=800):
 
 # ============= MATPLOTLIB CHART FUNCTIONS FOR DOCX EXPORT =============
 
+def create_matplotlib_risk_matrix_combined(df):
+    """Create side-by-side risk matrix comparison (initial vs residual) for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+
+    # Determine common axis limits for both charts
+    max_likelihood = max(df['Initial_Likelihood'].max(), df['Residual_Likelihood'].max()) * 100 * 1.1
+    max_impact = max(df['Initial risk_Value'].max(), df['Residual risk_Value'].max()) / 1e6 * 1.1
+    max_ev = max(
+        (df['Initial_Likelihood'] * df['Initial risk_Value']).max(),
+        (df['Residual_Likelihood'] * df['Residual risk_Value']).max()
+    ) / 1e6
+
+    for idx, (ax, risk_type) in enumerate(zip(axes, ['initial', 'residual'])):
+        if risk_type == 'initial':
+            x = df['Initial_Likelihood'] * 100
+            y = df['Initial risk_Value'] / 1e6
+            title = 'Initial Risk Assessment'
+            color_label = 'Before Mitigation'
+        else:
+            x = df['Residual_Likelihood'] * 100
+            y = df['Residual risk_Value'] / 1e6
+            title = 'Residual Risk Assessment'
+            color_label = 'After Mitigation'
+
+        # Calculate expected values for color
+        ev = x * y / 100
+
+        # Create scatter plot with consistent color scale
+        scatter = ax.scatter(x, y, c=ev, cmap='RdYlGn_r', s=120, alpha=0.7,
+                            edgecolors='black', linewidth=0.5, vmin=0, vmax=max_ev)
+
+        # Add colorbar
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_label('Expected Value (M CHF)', fontsize=9)
+
+        # Set consistent axis limits
+        ax.set_xlim(0, max_likelihood)
+        ax.set_ylim(0, max_impact)
+
+        # Add quadrant lines using overall median
+        ax.axhline(y=df['Initial risk_Value'].median() / 1e6, color='gray', linestyle='--', alpha=0.5)
+        ax.axvline(x=df['Initial_Likelihood'].median() * 100, color='gray', linestyle='--', alpha=0.5)
+
+        # Labels
+        ax.set_xlabel('Likelihood (%)', fontsize=11)
+        ax.set_ylabel('Impact (Million CHF)', fontsize=11)
+        ax.set_title(title, fontsize=13, fontweight='bold', color='#1F4E78')
+
+        # Add risk labels
+        for _, row in df.iterrows():
+            if risk_type == 'initial':
+                xi, yi = row['Initial_Likelihood'] * 100, row['Initial risk_Value'] / 1e6
+            else:
+                xi, yi = row['Residual_Likelihood'] * 100, row['Residual risk_Value'] / 1e6
+            ax.annotate(row['Risk ID'], (xi, yi), fontsize=6, alpha=0.7,
+                       xytext=(2, 2), textcoords='offset points')
+
+        ax.grid(True, alpha=0.3)
+
+    # Add overall title
+    fig.suptitle('Risk Matrix Comparison: Before vs After Mitigation', fontsize=14, fontweight='bold', color='#1F4E78', y=1.02)
+    plt.tight_layout()
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
 def create_matplotlib_risk_matrix(df, risk_type='initial'):
     """Create risk matrix using matplotlib for DOCX export"""
     import matplotlib
@@ -1087,6 +1161,66 @@ def create_matplotlib_risk_matrix(df, risk_type='initial'):
     plt.close(fig)
     return buf
 
+def create_matplotlib_cdf_combined(initial_results, initial_stats, residual_results, residual_stats, confidence_level='P95'):
+    """Create side-by-side CDF comparison (initial vs residual) for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Determine common x-axis limit
+    max_value = max(initial_results.max(), residual_results.max()) / 1e6 * 1.05
+
+    for idx, (ax, results, stats, title) in enumerate(zip(
+        axes,
+        [initial_results, residual_results],
+        [initial_stats, residual_stats],
+        ['Initial Risk Exposure', 'Residual Risk Exposure']
+    )):
+        # Sort results for CDF
+        sorted_results = np.sort(results)
+        cumulative = np.arange(1, len(sorted_results) + 1) / len(sorted_results)
+
+        # Plot CDF
+        ax.plot(sorted_results / 1e6, cumulative * 100, color='#1F4E78', linewidth=2)
+        ax.fill_between(sorted_results / 1e6, cumulative * 100, alpha=0.3, color='#1F4E78')
+
+        # Add percentile lines
+        percentiles = {'P50': (stats['p50'], '#2ecc71'), 'P80': (stats['p80'], '#f39c12'), 'P95': (stats['p95'], '#e74c3c')}
+        for label, (value, color) in percentiles.items():
+            ax.axvline(x=value / 1e6, color=color, linestyle='--', linewidth=2, alpha=0.8)
+            pct = int(label[1:])
+            ax.axhline(y=pct, color=color, linestyle=':', linewidth=1, alpha=0.5)
+
+            # Highlight selected confidence level
+            if label == confidence_level:
+                ax.annotate(f'{label}: {value/1e6:.2f}M CHF',
+                           xy=(value / 1e6, pct), xytext=(10, 10),
+                           textcoords='offset points', fontsize=9, fontweight='bold',
+                           color=color, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor=color))
+            else:
+                ax.annotate(f'{label}: {value/1e6:.2f}M',
+                           xy=(value / 1e6, pct), xytext=(5, 5),
+                           textcoords='offset points', fontsize=8, color=color)
+
+        ax.set_title(title, fontsize=13, fontweight='bold', color='#1F4E78')
+        ax.set_xlabel('Total Risk Exposure (Million CHF)', fontsize=11)
+        ax.set_ylabel('Cumulative Probability (%)', fontsize=11)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0, 100)
+        ax.set_xlim(0, max_value)
+
+    # Add overall title
+    fig.suptitle('CDF Comparison: Before vs After Mitigation', fontsize=14, fontweight='bold', color='#1F4E78', y=1.02)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
 def create_matplotlib_cdf(results, stats, risk_type='initial', confidence_level='P95'):
     """Create CDF plot using matplotlib for DOCX export"""
     import matplotlib
@@ -1128,6 +1262,51 @@ def create_matplotlib_cdf(results, stats, risk_type='initial', confidence_level=
     ax.grid(True, alpha=0.3)
     ax.set_ylim(0, 100)
 
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+def create_matplotlib_histogram_combined(initial_results, initial_stats, residual_results, residual_stats):
+    """Create side-by-side histogram comparison (initial vs residual) for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Determine common axis limits
+    all_results = np.concatenate([initial_results, residual_results])
+    min_val = all_results.min() / 1e6
+    max_val = all_results.max() / 1e6
+    bins = np.linspace(min_val, max_val, 51)
+
+    for idx, (ax, results, stats, title) in enumerate(zip(
+        axes,
+        [initial_results, residual_results],
+        [initial_stats, residual_stats],
+        ['Initial Risk Distribution', 'Residual Risk Distribution']
+    )):
+        # Create histogram
+        n, _, patches = ax.hist(results / 1e6, bins=bins, color='#1F4E78', alpha=0.7, edgecolor='white')
+
+        # Add mean and median lines
+        ax.axvline(x=stats['mean'] / 1e6, color='#e74c3c', linestyle='-', linewidth=2, label=f'Mean: {stats["mean"]/1e6:.2f}M')
+        ax.axvline(x=stats['p50'] / 1e6, color='#2ecc71', linestyle='--', linewidth=2, label=f'Median: {stats["p50"]/1e6:.2f}M')
+        ax.axvline(x=stats['p95'] / 1e6, color='#f39c12', linestyle=':', linewidth=2, label=f'P95: {stats["p95"]/1e6:.2f}M')
+
+        ax.set_title(title, fontsize=13, fontweight='bold', color='#1F4E78')
+        ax.set_xlabel('Total Risk Exposure (Million CHF)', fontsize=11)
+        ax.set_ylabel('Frequency', fontsize=11)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_xlim(min_val, max_val)
+
+    # Add overall title
+    fig.suptitle('Risk Distribution Comparison: Before vs After Mitigation', fontsize=14, fontweight='bold', color='#1F4E78', y=1.02)
     plt.tight_layout()
 
     buf = io.BytesIO()
@@ -1978,15 +2157,16 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
     add_docx_contingency_section(doc, initial_stats, residual_stats, df, confidence_level)
 
     # Generate and embed charts using matplotlib (reliable, no external dependencies)
-    with st.spinner("Generating risk matrix chart..."):
-        risk_matrix_img = create_matplotlib_risk_matrix(df, 'initial')
+    # Side-by-side comparison charts showing initial vs residual
+    with st.spinner("Generating risk matrix comparison chart..."):
+        risk_matrix_img = create_matplotlib_risk_matrix_combined(df)
 
     add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img)
 
-    # Monte Carlo section with charts
-    with st.spinner("Generating Monte Carlo charts..."):
-        cdf_img = create_matplotlib_cdf(initial_results, initial_stats, 'initial', confidence_level)
-        hist_img = create_matplotlib_histogram(initial_results, initial_stats, 'initial')
+    # Monte Carlo section with side-by-side comparison charts
+    with st.spinner("Generating Monte Carlo comparison charts..."):
+        cdf_img = create_matplotlib_cdf_combined(initial_results, initial_stats, residual_results, residual_stats, confidence_level)
+        hist_img = create_matplotlib_histogram_combined(initial_results, initial_stats, residual_results, residual_stats)
 
     add_docx_monte_carlo_section(doc, n_simulations, cdf_img, hist_img)
 
