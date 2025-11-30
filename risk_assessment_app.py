@@ -9,10 +9,6 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend for server-side rendering
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import io
 from datetime import datetime
 
@@ -1038,6 +1034,10 @@ def plotly_to_image_bytes(fig, width=1600, height=800):
 
 def create_matplotlib_risk_matrix(df, risk_type='initial'):
     """Create risk matrix using matplotlib for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(10, 8))
 
     if risk_type == 'initial':
@@ -1089,6 +1089,10 @@ def create_matplotlib_risk_matrix(df, risk_type='initial'):
 
 def create_matplotlib_cdf(results, stats, risk_type='initial', confidence_level='P95'):
     """Create CDF plot using matplotlib for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Sort results for CDF
@@ -1134,6 +1138,10 @@ def create_matplotlib_cdf(results, stats, risk_type='initial', confidence_level=
 
 def create_matplotlib_histogram(results, stats, risk_type='initial'):
     """Create histogram using matplotlib for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Create histogram
@@ -1161,6 +1169,10 @@ def create_matplotlib_histogram(results, stats, risk_type='initial'):
 
 def create_matplotlib_pareto(sensitivity_df, top_n=20):
     """Create Pareto chart using matplotlib for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
     fig, ax1 = plt.subplots(figsize=(12, 8))
 
     # Get top N risks
@@ -1199,6 +1211,10 @@ def create_matplotlib_pareto(sensitivity_df, top_n=20):
 
 def create_matplotlib_roi_chart(df_with_roi, top_n=20):
     """Create ROI bar chart using matplotlib for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
     df_with_measures = df_with_roi[df_with_roi['Cost of Measures_Value'] > 0].copy()
     if len(df_with_measures) == 0:
         return None
