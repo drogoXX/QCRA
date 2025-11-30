@@ -9,6 +9,10 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for server-side rendering
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import io
 from datetime import datetime
 
@@ -1028,8 +1032,210 @@ def plotly_to_image_bytes(fig, width=1600, height=800):
         return io.BytesIO(img_bytes)
     except Exception as e:
         # Fall back gracefully if kaleido is not available
-        st.warning(f"Chart export not available: {str(e)}. Install kaleido: pip install kaleido")
         return None
+
+# ============= MATPLOTLIB CHART FUNCTIONS FOR DOCX EXPORT =============
+
+def create_matplotlib_risk_matrix(df, risk_type='initial'):
+    """Create risk matrix using matplotlib for DOCX export"""
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    if risk_type == 'initial':
+        x = df['Initial_Likelihood'] * 100
+        y = df['Initial risk_Value'] / 1e6
+        title = 'Risk Matrix - Initial Risk Assessment'
+    else:
+        x = df['Residual_Likelihood'] * 100
+        y = df['Residual risk_Value'] / 1e6
+        title = 'Risk Matrix - Residual Risk Assessment'
+
+    # Calculate expected values for color
+    ev = x * y / 100
+
+    # Create scatter plot
+    scatter = ax.scatter(x, y, c=ev, cmap='RdYlGn_r', s=150, alpha=0.7, edgecolors='black', linewidth=0.5)
+
+    # Add colorbar
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label('Expected Value (M CHF)', fontsize=10)
+
+    # Add quadrant lines
+    ax.axhline(y=y.median(), color='gray', linestyle='--', alpha=0.5)
+    ax.axvline(x=x.median(), color='gray', linestyle='--', alpha=0.5)
+
+    # Labels
+    ax.set_xlabel('Likelihood (%)', fontsize=12)
+    ax.set_ylabel('Impact (Million CHF)', fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold', color='#1F4E78')
+
+    # Add risk labels
+    for idx, row in df.iterrows():
+        if risk_type == 'initial':
+            xi, yi = row['Initial_Likelihood'] * 100, row['Initial risk_Value'] / 1e6
+        else:
+            xi, yi = row['Residual_Likelihood'] * 100, row['Residual risk_Value'] / 1e6
+        ax.annotate(row['Risk ID'], (xi, yi), fontsize=7, alpha=0.7,
+                   xytext=(3, 3), textcoords='offset points')
+
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+def create_matplotlib_cdf(results, stats, risk_type='initial', confidence_level='P95'):
+    """Create CDF plot using matplotlib for DOCX export"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Sort results for CDF
+    sorted_results = np.sort(results)
+    cumulative = np.arange(1, len(sorted_results) + 1) / len(sorted_results)
+
+    # Plot CDF
+    ax.plot(sorted_results / 1e6, cumulative * 100, color='#1F4E78', linewidth=2)
+    ax.fill_between(sorted_results / 1e6, cumulative * 100, alpha=0.3, color='#1F4E78')
+
+    # Add percentile lines
+    percentiles = {'P50': (stats['p50'], '#2ecc71'), 'P80': (stats['p80'], '#f39c12'), 'P95': (stats['p95'], '#e74c3c')}
+    for label, (value, color) in percentiles.items():
+        ax.axvline(x=value / 1e6, color=color, linestyle='--', linewidth=2, alpha=0.8)
+        pct = int(label[1:])
+        ax.axhline(y=pct, color=color, linestyle=':', linewidth=1, alpha=0.5)
+
+        # Highlight selected confidence level
+        if label == confidence_level:
+            ax.annotate(f'{label}: {value/1e6:.2f}M CHF',
+                       xy=(value / 1e6, pct), xytext=(10, 10),
+                       textcoords='offset points', fontsize=10, fontweight='bold',
+                       color=color, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor=color))
+        else:
+            ax.annotate(f'{label}: {value/1e6:.2f}M',
+                       xy=(value / 1e6, pct), xytext=(5, 5),
+                       textcoords='offset points', fontsize=9, color=color)
+
+    title = 'Cumulative Distribution Function - ' + ('Initial' if risk_type == 'initial' else 'Residual') + ' Risk'
+    ax.set_title(title, fontsize=14, fontweight='bold', color='#1F4E78')
+    ax.set_xlabel('Total Risk Exposure (Million CHF)', fontsize=12)
+    ax.set_ylabel('Cumulative Probability (%)', fontsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0, 100)
+
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+def create_matplotlib_histogram(results, stats, risk_type='initial'):
+    """Create histogram using matplotlib for DOCX export"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Create histogram
+    n, bins, patches = ax.hist(results / 1e6, bins=50, color='#1F4E78', alpha=0.7, edgecolor='white')
+
+    # Add mean and median lines
+    ax.axvline(x=stats['mean'] / 1e6, color='#e74c3c', linestyle='-', linewidth=2, label=f'Mean: {stats["mean"]/1e6:.2f}M')
+    ax.axvline(x=stats['p50'] / 1e6, color='#2ecc71', linestyle='--', linewidth=2, label=f'Median: {stats["p50"]/1e6:.2f}M')
+    ax.axvline(x=stats['p95'] / 1e6, color='#f39c12', linestyle=':', linewidth=2, label=f'P95: {stats["p95"]/1e6:.2f}M')
+
+    title = 'Risk Exposure Distribution - ' + ('Initial' if risk_type == 'initial' else 'Residual') + ' Risk'
+    ax.set_title(title, fontsize=14, fontweight='bold', color='#1F4E78')
+    ax.set_xlabel('Total Risk Exposure (Million CHF)', fontsize=12)
+    ax.set_ylabel('Frequency', fontsize=12)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3, axis='y')
+
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+def create_matplotlib_pareto(sensitivity_df, top_n=20):
+    """Create Pareto chart using matplotlib for DOCX export"""
+    fig, ax1 = plt.subplots(figsize=(12, 8))
+
+    # Get top N risks
+    df_plot = sensitivity_df.head(top_n).copy()
+
+    # Bar chart for variance contribution
+    bars = ax1.barh(range(len(df_plot)), df_plot['Variance %'], color='#1F4E78', alpha=0.8)
+    ax1.set_yticks(range(len(df_plot)))
+    ax1.set_yticklabels([f"{row['Risk ID']}: {row['Risk Description'][:30]}..."
+                         if len(row['Risk Description']) > 30 else f"{row['Risk ID']}: {row['Risk Description']}"
+                         for _, row in df_plot.iterrows()], fontsize=9)
+    ax1.invert_yaxis()
+    ax1.set_xlabel('Variance Contribution (%)', fontsize=12, color='#1F4E78')
+    ax1.tick_params(axis='x', labelcolor='#1F4E78')
+
+    # Cumulative line on secondary axis
+    ax2 = ax1.twiny()
+    ax2.plot(df_plot['Cumulative %'], range(len(df_plot)), color='#e74c3c', linewidth=2, marker='o', markersize=5)
+    ax2.set_xlabel('Cumulative %', fontsize=12, color='#e74c3c')
+    ax2.tick_params(axis='x', labelcolor='#e74c3c')
+
+    # Add 80% threshold line
+    ax2.axvline(x=80, color='#e74c3c', linestyle='--', alpha=0.5)
+    ax2.annotate('80% threshold', xy=(80, len(df_plot)-1), fontsize=9, color='#e74c3c')
+
+    ax1.set_title('Pareto Analysis - Risk Variance Contribution', fontsize=14, fontweight='bold', color='#1F4E78', pad=20)
+    ax1.grid(True, alpha=0.3, axis='x')
+
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+def create_matplotlib_roi_chart(df_with_roi, top_n=20):
+    """Create ROI bar chart using matplotlib for DOCX export"""
+    df_with_measures = df_with_roi[df_with_roi['Cost of Measures_Value'] > 0].copy()
+    if len(df_with_measures) == 0:
+        return None
+
+    df_plot = df_with_measures.nlargest(top_n, 'ROI')
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Color based on ROI value (green for positive, red for negative)
+    colors = ['#27ae60' if roi > 0 else '#e74c3c' for roi in df_plot['ROI']]
+
+    bars = ax.barh(range(len(df_plot)), df_plot['ROI'], color=colors, alpha=0.8)
+    ax.set_yticks(range(len(df_plot)))
+    ax.set_yticklabels([f"{row['Risk ID']}: {row['Risk Description'][:35]}..."
+                        if len(row['Risk Description']) > 35 else f"{row['Risk ID']}: {row['Risk Description']}"
+                        for _, row in df_plot.iterrows()], fontsize=9)
+    ax.invert_yaxis()
+
+    # Add value labels on bars
+    for i, (idx, row) in enumerate(df_plot.iterrows()):
+        ax.annotate(f'{row["ROI"]:.0f}%', xy=(row['ROI'], i), va='center',
+                   fontsize=9, fontweight='bold',
+                   xytext=(5 if row['ROI'] >= 0 else -5, 0), textcoords='offset points',
+                   ha='left' if row['ROI'] >= 0 else 'right')
+
+    ax.axvline(x=0, color='black', linewidth=0.5)
+    ax.set_xlabel('Return on Investment (%)', fontsize=12)
+    ax.set_title('Top Mitigation Measures by ROI', fontsize=14, fontweight='bold', color='#1F4E78')
+    ax.grid(True, alpha=0.3, axis='x')
+
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
 
 def add_docx_cover_page(doc, confidence_level):
     """Add professional cover page to DOCX report"""
@@ -1755,46 +1961,28 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
     # Add contingency allocation section
     add_docx_contingency_section(doc, initial_stats, residual_stats, df, confidence_level)
 
-    # Generate and embed charts
+    # Generate and embed charts using matplotlib (reliable, no external dependencies)
     with st.spinner("Generating risk matrix chart..."):
-        risk_matrix_fig = create_risk_matrix(df, 'initial')
-        risk_matrix_img = plotly_to_image_bytes(risk_matrix_fig, width=1600, height=800)
+        risk_matrix_img = create_matplotlib_risk_matrix(df, 'initial')
 
     add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img)
 
     # Monte Carlo section with charts
     with st.spinner("Generating Monte Carlo charts..."):
-        cdf_fig = create_cdf_plot(initial_results, initial_stats, 'initial', confidence_level)
-        cdf_img = plotly_to_image_bytes(cdf_fig, width=1600, height=600)
-
-        hist_fig = create_histogram(initial_results, initial_stats, 'initial')
-        hist_img = plotly_to_image_bytes(hist_fig, width=1600, height=600)
+        cdf_img = create_matplotlib_cdf(initial_results, initial_stats, 'initial', confidence_level)
+        hist_img = create_matplotlib_histogram(initial_results, initial_stats, 'initial')
 
     add_docx_monte_carlo_section(doc, n_simulations, cdf_img, hist_img)
 
     # Sensitivity section with Pareto chart
     with st.spinner("Generating sensitivity analysis chart..."):
-        pareto_fig = create_pareto_chart(sensitivity_df, top_n=20)
-        pareto_img = plotly_to_image_bytes(pareto_fig, width=1600, height=800)
+        pareto_img = create_matplotlib_pareto(sensitivity_df, top_n=20)
 
     add_docx_sensitivity_section(doc, sensitivity_df, pareto_img)
 
     # Mitigation section with ROI chart
     with st.spinner("Generating mitigation analysis chart..."):
-        df_with_measures = df_with_roi[df_with_roi['Cost of Measures_Value'] > 0]
-        if len(df_with_measures) > 0:
-            df_roi_sorted = df_with_measures.nlargest(20, 'ROI')
-            roi_fig = px.bar(df_roi_sorted,
-                            x='ROI',
-                            y='Risk Description',
-                            orientation='h',
-                            title='Top 20 Mitigation Measures by ROI (%)',
-                            color='ROI',
-                            color_continuous_scale='RdYlGn')
-            roi_fig.update_layout(height=600, yaxis={'categoryorder': 'total ascending'})
-            roi_img = plotly_to_image_bytes(roi_fig, width=1600, height=600)
-        else:
-            roi_img = None
+        roi_img = create_matplotlib_roi_chart(df_with_roi, top_n=20)
 
     add_docx_mitigation_section(doc, df_with_roi, roi_img)
 
