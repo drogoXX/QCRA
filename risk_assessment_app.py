@@ -994,10 +994,8 @@ def format_table_contingency(table):
     # Format data rows with special styling
     row_styles = [
         ("E8F4FD", False),   # Row 1: Light blue - Residual Risk Reserve
-        ("E8F4FD", False),   # Row 2: Light blue - Mitigation Cost
-        ("D4EDFC", True),    # Row 3: Medium blue - Subtotal
-        ("FFF3CD", False),   # Row 4: Light amber - Management Reserve
-        ("1F4E78", True),    # Row 5: Dark blue - Total Contingency (header-style)
+        ("E8F4FD", False),   # Row 2: Light blue - Mitigation Investment
+        ("1F4E78", True),    # Row 3: Dark blue - Total Contingency (header-style)
     ]
 
     for i, row in enumerate(table.rows[1:], 0):
@@ -1247,25 +1245,7 @@ def add_docx_contingency_section(doc, initial_stats, residual_stats, df, confide
     # Get values
     residual_selected = get_confidence_value(residual_stats, confidence_level)
     total_mitigation_cost = df['Cost of Measures_Value'].sum()
-
-    # Calculate management reserve (difference between P95 and selected percentile for additional buffer)
-    residual_p95 = residual_stats['p95']
-    residual_p80 = residual_stats['p80']
-    residual_p50 = residual_stats['p50']
-
-    # Management reserve based on risk profile
-    if confidence_level == 'P95':
-        management_reserve = residual_selected * 0.10  # 10% buffer for P95
-        reserve_explanation = "conservative"
-    elif confidence_level == 'P80':
-        management_reserve = residual_p95 - residual_selected  # Gap to P95
-        reserve_explanation = "moderate"
-    else:  # P50
-        management_reserve = residual_p80 - residual_selected  # Gap to P80
-        reserve_explanation = "optimistic"
-
-    subtotal = residual_selected + total_mitigation_cost
-    total_contingency = subtotal + management_reserve
+    total_contingency = residual_selected + total_mitigation_cost
 
     # Introductory narrative
     intro = doc.add_paragraph()
@@ -1291,7 +1271,7 @@ def add_docx_contingency_section(doc, initial_stats, residual_stats, df, confide
         run.font.color.rgb = RGBColor(31, 78, 120)
 
     # Create the professional contingency table
-    table = doc.add_table(rows=6, cols=3)
+    table = doc.add_table(rows=4, cols=3)
 
     # Headers
     table.rows[0].cells[0].text = 'Component'
@@ -1304,10 +1284,6 @@ def add_docx_contingency_section(doc, initial_stats, residual_stats, df, confide
          f'{confidence_level} probabilistic exposure after mitigation'),
         ('Mitigation Investment', f'{total_mitigation_cost/1e6:.2f}',
          'Total cost of planned risk mitigation measures'),
-        ('Subtotal (Base Contingency)', f'{subtotal/1e6:.2f}',
-         'Minimum required project risk contingency'),
-        ('Management Reserve', f'{management_reserve/1e6:.2f}',
-         f'Additional buffer for {reserve_explanation} risk profile'),
         ('TOTAL PROJECT CONTINGENCY', f'{total_contingency/1e6:.2f}',
          'Recommended allocation for BoD approval'),
     ]
