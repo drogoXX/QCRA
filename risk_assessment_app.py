@@ -1031,61 +1031,50 @@ def create_risk_sankey(df, initial_stats, residual_stats, confidence_level='P95'
     - confidence_level: Selected confidence level (P50, P80, P95)
     """
 
-    # Calculate totals
-    total_initial_ev = df['Initial_EV'].sum()
-    total_residual_ev = df['Residual_EV'].sum()
-    total_risk_reduction = df['Risk_Reduction'].sum()
-    total_mitigation_cost = df['Cost of Measures_Value'].sum()
+    # Filter to only include risks (positive EV), excluding opportunities
+    df_risks = df[df['Initial_EV'] > 0].copy()
+
+    # Calculate totals using absolute values to properly represent risk exposure
+    total_initial_ev = df_risks['Initial_EV'].sum()
+    total_residual_ev = df_risks['Residual_EV'].abs().sum()  # Use abs for residual too
+    total_mitigation_cost = df_risks['Cost of Measures_Value'].sum()
 
     # Separate risks with and without mitigation
-    df_with_mitigation = df[df['Cost of Measures_Value'] > 0]
-    df_without_mitigation = df[df['Cost of Measures_Value'] == 0]
+    df_with_mitigation = df_risks[df_risks['Cost of Measures_Value'] > 0]
+    df_without_mitigation = df_risks[df_risks['Cost of Measures_Value'] == 0]
 
     # Calculate values for each category
     mitigated_initial = df_with_mitigation['Initial_EV'].sum()
     unmitigated_initial = df_without_mitigation['Initial_EV'].sum()
 
-    mitigated_residual = df_with_mitigation['Residual_EV'].sum()
-    unmitigated_residual = df_without_mitigation['Residual_EV'].sum()
+    mitigated_residual = df_with_mitigation['Residual_EV'].abs().sum()
+    unmitigated_residual = df_without_mitigation['Residual_EV'].abs().sum()
 
-    risk_eliminated = df_with_mitigation['Risk_Reduction'].sum()
+    risk_eliminated = max(0, mitigated_initial - mitigated_residual)
 
-    # Calculate net benefit (risk reduction - cost)
-    net_benefit = risk_eliminated - total_mitigation_cost
-
-    # Define node labels and colors
-    # Node indices:
-    # 0: Total Initial Risk
-    # 1: Risks with Mitigation (Initial)
-    # 2: Risks without Mitigation (Initial)
-    # 3: Risk Eliminated
-    # 4: Mitigated Residual Risk
-    # 5: Unmitigated Residual Risk
-    # 6: Total Residual Risk
-
+    # Define node labels with cleaner formatting (values on separate line)
     labels = [
-        f"Initial Risk<br>{total_initial_ev/1e6:.1f}M CHF",           # 0
-        f"Mitigated Risks<br>{mitigated_initial/1e6:.1f}M CHF",       # 1
-        f"Unmitigated Risks<br>{unmitigated_initial/1e6:.1f}M CHF",   # 2
-        f"Risk Eliminated<br>{risk_eliminated/1e6:.1f}M CHF",         # 3
-        f"Residual (Mitigated)<br>{mitigated_residual/1e6:.1f}M CHF", # 4
-        f"Residual (Unmitigated)<br>{unmitigated_residual/1e6:.1f}M CHF", # 5
-        f"Total Residual<br>{total_residual_ev/1e6:.1f}M CHF"         # 6
+        f"Initial Risk\n{total_initial_ev/1e6:.1f}M CHF",           # 0
+        f"Mitigated Risks\n{mitigated_initial/1e6:.1f}M CHF",       # 1
+        f"Unmitigated Risks\n{unmitigated_initial/1e6:.1f}M CHF",   # 2
+        f"Risk Eliminated\n{risk_eliminated/1e6:.1f}M CHF",         # 3
+        f"Residual (Mitigated)\n{mitigated_residual/1e6:.1f}M CHF", # 4
+        f"Residual (Unmitigated)\n{unmitigated_residual/1e6:.1f}M CHF", # 5
+        f"Total Residual\n{total_residual_ev/1e6:.1f}M CHF"         # 6
     ]
 
-    # Colors for nodes
+    # Colors for nodes (more vibrant for visibility)
     colors = [
-        "#E74C3C",  # 0: Initial Risk - Red
-        "#F39C12",  # 1: Mitigated Risks - Orange
-        "#9B59B6",  # 2: Unmitigated Risks - Purple
-        "#27AE60",  # 3: Risk Eliminated - Green
-        "#3498DB",  # 4: Residual (Mitigated) - Blue
-        "#8E44AD",  # 5: Residual (Unmitigated) - Dark Purple
-        "#E67E22"   # 6: Total Residual - Dark Orange
+        "#C0392B",  # 0: Initial Risk - Dark Red
+        "#D35400",  # 1: Mitigated Risks - Dark Orange
+        "#8E44AD",  # 2: Unmitigated Risks - Purple
+        "#1E8449",  # 3: Risk Eliminated - Dark Green
+        "#2471A3",  # 4: Residual (Mitigated) - Dark Blue
+        "#6C3483",  # 5: Residual (Unmitigated) - Dark Purple
+        "#B9770E"   # 6: Total Residual - Dark Gold
     ]
 
     # Define links (source, target, value)
-    # Handle cases where values might be zero
     links_source = []
     links_target = []
     links_value = []
@@ -1096,55 +1085,55 @@ def create_risk_sankey(df, initial_stats, residual_stats, confidence_level='P95'
         links_source.append(0)
         links_target.append(1)
         links_value.append(mitigated_initial)
-        links_color.append("rgba(243, 156, 18, 0.5)")  # Orange
+        links_color.append("rgba(211, 84, 0, 0.6)")  # Orange
 
     # Flow 2: Initial Risk -> Unmitigated Risks (if > 0)
     if unmitigated_initial > 0:
         links_source.append(0)
         links_target.append(2)
         links_value.append(unmitigated_initial)
-        links_color.append("rgba(155, 89, 182, 0.5)")  # Purple
+        links_color.append("rgba(142, 68, 173, 0.6)")  # Purple
 
     # Flow 3: Mitigated Risks -> Risk Eliminated (if > 0)
     if risk_eliminated > 0:
         links_source.append(1)
         links_target.append(3)
         links_value.append(risk_eliminated)
-        links_color.append("rgba(39, 174, 96, 0.5)")  # Green
+        links_color.append("rgba(30, 132, 73, 0.6)")  # Green
 
     # Flow 4: Mitigated Risks -> Residual (Mitigated) (if > 0)
     if mitigated_residual > 0:
         links_source.append(1)
         links_target.append(4)
         links_value.append(mitigated_residual)
-        links_color.append("rgba(52, 152, 219, 0.5)")  # Blue
+        links_color.append("rgba(36, 113, 163, 0.6)")  # Blue
 
     # Flow 5: Unmitigated Risks -> Residual (Unmitigated) (if > 0)
     if unmitigated_residual > 0:
         links_source.append(2)
         links_target.append(5)
         links_value.append(unmitigated_residual)
-        links_color.append("rgba(142, 68, 173, 0.5)")  # Dark Purple
+        links_color.append("rgba(108, 52, 131, 0.6)")  # Dark Purple
 
     # Flow 6: Residual (Mitigated) -> Total Residual (if > 0)
     if mitigated_residual > 0:
         links_source.append(4)
         links_target.append(6)
         links_value.append(mitigated_residual)
-        links_color.append("rgba(230, 126, 34, 0.5)")  # Dark Orange
+        links_color.append("rgba(185, 119, 14, 0.6)")  # Gold
 
     # Flow 7: Residual (Unmitigated) -> Total Residual (if > 0)
     if unmitigated_residual > 0:
         links_source.append(5)
         links_target.append(6)
         links_value.append(unmitigated_residual)
-        links_color.append("rgba(230, 126, 34, 0.5)")  # Dark Orange
+        links_color.append("rgba(185, 119, 14, 0.6)")  # Gold
 
     fig = go.Figure(data=[go.Sankey(
         node=dict(
-            pad=20,
-            thickness=25,
-            line=dict(color="black", width=1),
+            pad=25,
+            thickness=30,
+            line=dict(color="black", width=2),
             label=labels,
             color=colors,
             hovertemplate='%{label}<extra></extra>'
@@ -1155,21 +1144,29 @@ def create_risk_sankey(df, initial_stats, residual_stats, confidence_level='P95'
             value=links_value,
             color=links_color,
             hovertemplate='%{source.label} → %{target.label}<br>Value: %{value:,.0f} CHF<extra></extra>'
-        )
+        ),
+        textfont=dict(size=14, color='black', family='Arial Black')
     )])
 
     # Calculate reduction percentage
     reduction_pct = (risk_eliminated / total_initial_ev * 100) if total_initial_ev > 0 else 0
 
+    # Count opportunities excluded
+    opportunities_count = len(df[df['Initial_EV'] <= 0])
+    opportunities_note = f" | Opportunities excluded: {opportunities_count}" if opportunities_count > 0 else ""
+
     fig.update_layout(
         title={
-            'text': f'Risk Mitigation Flow<br><sub>Showing how initial risk flows through mitigation to residual risk | '
-                   f'Total Reduction: {reduction_pct:.1f}%</sub>',
-            'font': {'size': 16}
+            'text': f'<b>Risk Mitigation Flow</b><br><sup>Initial risk → Mitigation → Residual | '
+                   f'Total Reduction: {reduction_pct:.1f}%{opportunities_note}</sup>',
+            'font': {'size': 18, 'color': '#2C3E50'},
+            'x': 0.5,
+            'xanchor': 'center'
         },
-        font=dict(size=11),
-        height=500,
-        paper_bgcolor='white'
+        font=dict(size=14, color='#2C3E50', family='Arial'),
+        height=550,
+        paper_bgcolor='#FAFAFA',
+        margin=dict(l=20, r=20, t=80, b=20)
     )
 
     return fig
@@ -1181,46 +1178,49 @@ def create_risk_sankey_detailed(df):
     Shows risk flow broken down by schedule impact status.
     """
 
+    # Filter to only include risks (positive EV), excluding opportunities
+    df_risks = df[df['Initial_EV'] > 0].copy()
+
     # Separate by schedule impact
-    df_schedule = df[df['Schedule_Impact'] == True]
-    df_no_schedule = df[df['Schedule_Impact'] == False]
+    df_schedule = df_risks[df_risks['Schedule_Impact'] == True]
+    df_no_schedule = df_risks[df_risks['Schedule_Impact'] == False]
 
     # Calculate values
-    total_initial = df['Initial_EV'].sum()
+    total_initial = df_risks['Initial_EV'].sum()
     schedule_initial = df_schedule['Initial_EV'].sum()
     no_schedule_initial = df_no_schedule['Initial_EV'].sum()
 
-    schedule_residual = df_schedule['Residual_EV'].sum()
-    no_schedule_residual = df_no_schedule['Residual_EV'].sum()
+    schedule_residual = df_schedule['Residual_EV'].abs().sum()
+    no_schedule_residual = df_no_schedule['Residual_EV'].abs().sum()
 
-    schedule_reduced = df_schedule['Risk_Reduction'].sum()
-    no_schedule_reduced = df_no_schedule['Risk_Reduction'].sum()
+    schedule_reduced = max(0, schedule_initial - schedule_residual)
+    no_schedule_reduced = max(0, no_schedule_initial - no_schedule_residual)
 
-    total_residual = df['Residual_EV'].sum()
-    total_reduced = df['Risk_Reduction'].sum()
+    total_residual = df_risks['Residual_EV'].abs().sum()
+    total_reduced = schedule_reduced + no_schedule_reduced
 
     labels = [
-        f"Total Initial Risk<br>{total_initial/1e6:.1f}M CHF",        # 0
-        f"Schedule Impact<br>{schedule_initial/1e6:.1f}M CHF",         # 1
-        f"No Schedule Impact<br>{no_schedule_initial/1e6:.1f}M CHF",   # 2
-        f"Reduced (Schedule)<br>{schedule_reduced/1e6:.1f}M CHF",      # 3
-        f"Reduced (No Schedule)<br>{no_schedule_reduced/1e6:.1f}M CHF",# 4
-        f"Residual (Schedule)<br>{schedule_residual/1e6:.1f}M CHF",    # 5
-        f"Residual (No Schedule)<br>{no_schedule_residual/1e6:.1f}M CHF", # 6
-        f"Total Risk Reduced<br>{total_reduced/1e6:.1f}M CHF",         # 7
-        f"Total Residual<br>{total_residual/1e6:.1f}M CHF"             # 8
+        f"Total Initial Risk\n{total_initial/1e6:.1f}M CHF",        # 0
+        f"Schedule Impact\n{schedule_initial/1e6:.1f}M CHF",         # 1
+        f"No Schedule Impact\n{no_schedule_initial/1e6:.1f}M CHF",   # 2
+        f"Reduced (Schedule)\n{schedule_reduced/1e6:.1f}M CHF",      # 3
+        f"Reduced (No Schedule)\n{no_schedule_reduced/1e6:.1f}M CHF",# 4
+        f"Residual (Schedule)\n{schedule_residual/1e6:.1f}M CHF",    # 5
+        f"Residual (No Schedule)\n{no_schedule_residual/1e6:.1f}M CHF", # 6
+        f"Total Risk Reduced\n{total_reduced/1e6:.1f}M CHF",         # 7
+        f"Total Residual\n{total_residual/1e6:.1f}M CHF"             # 8
     ]
 
     colors = [
-        "#E74C3C",  # Total Initial - Red
-        "#C0392B",  # Schedule Impact - Dark Red
-        "#E67E22",  # No Schedule Impact - Orange
-        "#27AE60",  # Reduced (Schedule) - Green
-        "#2ECC71",  # Reduced (No Schedule) - Light Green
-        "#3498DB",  # Residual (Schedule) - Blue
+        "#C0392B",  # Total Initial - Dark Red
+        "#922B21",  # Schedule Impact - Darker Red
+        "#D35400",  # No Schedule Impact - Dark Orange
+        "#1E8449",  # Reduced (Schedule) - Dark Green
+        "#28B463",  # Reduced (No Schedule) - Green
+        "#2471A3",  # Residual (Schedule) - Dark Blue
         "#5DADE2",  # Residual (No Schedule) - Light Blue
-        "#1ABC9C",  # Total Reduced - Teal
-        "#F39C12"   # Total Residual - Yellow
+        "#117A65",  # Total Reduced - Teal
+        "#B9770E"   # Total Residual - Dark Gold
     ]
 
     # Build links dynamically (skip zero values)
@@ -1230,16 +1230,16 @@ def create_risk_sankey_detailed(df):
     links_color = []
 
     link_definitions = [
-        (0, 1, schedule_initial, "rgba(192, 57, 43, 0.4)"),
-        (0, 2, no_schedule_initial, "rgba(230, 126, 34, 0.4)"),
-        (1, 3, schedule_reduced, "rgba(39, 174, 96, 0.4)"),
-        (1, 5, schedule_residual, "rgba(52, 152, 219, 0.4)"),
-        (2, 4, no_schedule_reduced, "rgba(46, 204, 113, 0.4)"),
-        (2, 6, no_schedule_residual, "rgba(93, 173, 226, 0.4)"),
-        (3, 7, schedule_reduced, "rgba(26, 188, 156, 0.4)"),
-        (4, 7, no_schedule_reduced, "rgba(26, 188, 156, 0.4)"),
-        (5, 8, schedule_residual, "rgba(243, 156, 18, 0.4)"),
-        (6, 8, no_schedule_residual, "rgba(243, 156, 18, 0.4)")
+        (0, 1, schedule_initial, "rgba(146, 43, 33, 0.5)"),
+        (0, 2, no_schedule_initial, "rgba(211, 84, 0, 0.5)"),
+        (1, 3, schedule_reduced, "rgba(30, 132, 73, 0.5)"),
+        (1, 5, schedule_residual, "rgba(36, 113, 163, 0.5)"),
+        (2, 4, no_schedule_reduced, "rgba(40, 180, 99, 0.5)"),
+        (2, 6, no_schedule_residual, "rgba(93, 173, 226, 0.5)"),
+        (3, 7, schedule_reduced, "rgba(17, 122, 101, 0.5)"),
+        (4, 7, no_schedule_reduced, "rgba(17, 122, 101, 0.5)"),
+        (5, 8, schedule_residual, "rgba(185, 119, 14, 0.5)"),
+        (6, 8, no_schedule_residual, "rgba(185, 119, 14, 0.5)")
     ]
 
     for source, target, value, color in link_definitions:
@@ -1251,9 +1251,9 @@ def create_risk_sankey_detailed(df):
 
     fig = go.Figure(data=[go.Sankey(
         node=dict(
-            pad=20,
-            thickness=25,
-            line=dict(color="black", width=1),
+            pad=25,
+            thickness=30,
+            line=dict(color="black", width=2),
             label=labels,
             color=colors
         ),
@@ -1262,17 +1262,25 @@ def create_risk_sankey_detailed(df):
             target=links_target,
             value=links_value,
             color=links_color
-        )
+        ),
+        textfont=dict(size=14, color='black', family='Arial Black')
     )])
+
+    # Count opportunities excluded
+    opportunities_count = len(df[df['Initial_EV'] <= 0])
+    opportunities_note = f" | Opportunities excluded: {opportunities_count}" if opportunities_count > 0 else ""
 
     fig.update_layout(
         title={
-            'text': 'Risk Flow by Schedule Impact<br><sub>Breakdown of risk reduction by schedule impact category</sub>',
-            'font': {'size': 16}
+            'text': f'<b>Risk Flow by Schedule Impact</b><br><sup>Breakdown by schedule impact category{opportunities_note}</sup>',
+            'font': {'size': 18, 'color': '#2C3E50'},
+            'x': 0.5,
+            'xanchor': 'center'
         },
-        font=dict(size=11),
-        height=550,
-        paper_bgcolor='white'
+        font=dict(size=14, color='#2C3E50', family='Arial'),
+        height=600,
+        paper_bgcolor='#FAFAFA',
+        margin=dict(l=20, r=20, t=80, b=20)
     )
 
     return fig
@@ -3179,15 +3187,21 @@ def main():
 
                 # Summary statistics below Sankey
                 st.markdown("##### Flow Summary")
+
+                # Filter to only include risks (positive EV), excluding opportunities
+                df_risks_only = df_with_roi[df_with_roi['Initial_EV'] > 0]
+                opportunities_count = len(df_with_roi[df_with_roi['Initial_EV'] <= 0])
+
                 flow_col1, flow_col2, flow_col3, flow_col4 = st.columns(4)
 
-                total_initial_ev = df_with_roi['Initial_EV'].sum()
-                total_residual_ev = df_with_roi['Residual_EV'].sum()
-                total_reduced = df_with_roi['Risk_Reduction'].sum()
+                total_initial_ev = df_risks_only['Initial_EV'].sum()
+                total_residual_ev = df_risks_only['Residual_EV'].abs().sum()
+                total_reduced = max(0, total_initial_ev - total_residual_ev)
                 reduction_pct = (total_reduced / total_initial_ev * 100) if total_initial_ev > 0 else 0
 
                 with flow_col1:
-                    st.metric("Initial Risk (EV)", f"{total_initial_ev/1e6:.2f}M CHF")
+                    st.metric("Initial Risk (EV)", f"{total_initial_ev/1e6:.2f}M CHF",
+                             help=f"Sum of risks only. {opportunities_count} opportunities excluded." if opportunities_count > 0 else None)
                 with flow_col2:
                     st.metric("Risk Eliminated", f"{total_reduced/1e6:.2f}M CHF", delta=f"-{reduction_pct:.1f}%")
                 with flow_col3:
