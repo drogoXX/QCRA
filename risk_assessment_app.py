@@ -495,28 +495,78 @@ def calculate_mitigation_roi(df):
     """Calculate ROI for risk mitigation measures"""
     # Calculate initial expected value
     df['Initial_EV'] = df['Initial risk_Value'] * df['Initial_Likelihood']
-    
+
     # Calculate residual expected value
     df['Residual_EV'] = df['Residual risk_Value'] * df['Residual_Likelihood']
-    
+
     # Calculate risk reduction
     df['Risk_Reduction'] = df['Initial_EV'] - df['Residual_EV']
-    
+
+    # Classify as Threat or Opportunity based on Initial_EV
+    # Threats have positive EV (costs), Opportunities have negative EV (benefits)
+    df['Risk_Type'] = df['Initial_EV'].apply(lambda x: 'Opportunity' if x < 0 else 'Threat')
+
     # Calculate ROI (only for risks with mitigation cost > 0)
     df['ROI'] = np.where(
         df['Cost of Measures_Value'] > 0,
         (df['Risk_Reduction'] - df['Cost of Measures_Value']) / df['Cost of Measures_Value'] * 100,
         0
     )
-    
+
     # Calculate benefit-cost ratio
     df['BC_Ratio'] = np.where(
         df['Cost of Measures_Value'] > 0,
         df['Risk_Reduction'] / df['Cost of Measures_Value'],
         0
     )
-    
+
     return df
+
+def calculate_threat_opportunity_metrics(df):
+    """
+    Calculate separate metrics for threats and opportunities.
+
+    In quantitative risk analysis:
+    - Threats: Positive EV (potential costs/losses)
+    - Opportunities: Negative EV (potential benefits/savings)
+    - Net Exposure: Threat EV + Opportunity EV (where Opportunity EV is negative)
+
+    Returns:
+        dict with threat_ev, opportunity_ev, net_exposure, and counts
+    """
+    # Separate threats and opportunities
+    df_threats = df[df['Initial_EV'] > 0]
+    df_opportunities = df[df['Initial_EV'] < 0]
+
+    # Calculate EVs (Opportunity EV will be negative)
+    threat_initial_ev = df_threats['Initial_EV'].sum()
+    opportunity_initial_ev = df_opportunities['Initial_EV'].sum()  # This is negative
+
+    threat_residual_ev = df_threats['Residual_EV'].sum()
+    opportunity_residual_ev = df_opportunities['Residual_EV'].sum()  # This is negative
+
+    # Net exposure = Threats + Opportunities (opportunities reduce the total)
+    net_initial_exposure = threat_initial_ev + opportunity_initial_ev
+    net_residual_exposure = threat_residual_ev + opportunity_residual_ev
+
+    # Calculate risk reduction for each category
+    threat_reduction = threat_initial_ev - threat_residual_ev
+    # For opportunities: "improvement" means opportunity EV becomes more negative (larger benefit)
+    opportunity_change = opportunity_initial_ev - opportunity_residual_ev
+
+    return {
+        'threat_count': len(df_threats),
+        'opportunity_count': len(df_opportunities),
+        'threat_initial_ev': threat_initial_ev,
+        'opportunity_initial_ev': opportunity_initial_ev,  # Negative value
+        'threat_residual_ev': threat_residual_ev,
+        'opportunity_residual_ev': opportunity_residual_ev,  # Negative value
+        'net_initial_exposure': net_initial_exposure,
+        'net_residual_exposure': net_residual_exposure,
+        'threat_reduction': threat_reduction,
+        'opportunity_change': opportunity_change,
+        'net_reduction': net_initial_exposure - net_residual_exposure
+    }
 
 def create_tornado_chart(df, top_n=15):
     """Create tornado chart for sensitivity analysis"""
@@ -1019,10 +1069,11 @@ def create_scenario_impact_table(df, scenario_adjustments, risk_type='initial'):
 
 def create_risk_sankey(df, initial_stats, residual_stats, confidence_level='P95'):
     """
-    Create a Sankey diagram showing the flow of risk through mitigation.
+    Create a Sankey diagram showing the flow of both threats and opportunities.
 
-    Shows how initial risk exposure flows through mitigation measures
-    to result in residual risk, with breakdown by mitigation status.
+    Shows how initial risk exposure (threats + opportunities) flows through
+    mitigation to result in residual exposure, with threats and opportunities
+    clearly distinguished.
 
     Parameters:
     - df: DataFrame with risk data including Initial_EV, Residual_EV, Risk_Reduction
@@ -1031,108 +1082,111 @@ def create_risk_sankey(df, initial_stats, residual_stats, confidence_level='P95'
     - confidence_level: Selected confidence level (P50, P80, P95)
     """
 
-    # Filter to only include risks (positive EV), excluding opportunities
-    df_risks = df[df['Initial_EV'] > 0].copy()
+    # Separate threats (positive EV) and opportunities (negative EV)
+    df_threats = df[df['Initial_EV'] > 0].copy()
+    df_opportunities = df[df['Initial_EV'] < 0].copy()
 
-    # Calculate totals using absolute values to properly represent risk exposure
-    total_initial_ev = df_risks['Initial_EV'].sum()
-    total_residual_ev = df_risks['Residual_EV'].abs().sum()  # Use abs for residual too
-    total_mitigation_cost = df_risks['Cost of Measures_Value'].sum()
+    # Calculate threat values
+    threat_initial = df_threats['Initial_EV'].sum()
+    threat_residual = df_threats['Residual_EV'].sum()
+    threat_reduced = max(0, threat_initial - threat_residual)
 
-    # Separate risks with and without mitigation
-    df_with_mitigation = df_risks[df_risks['Cost of Measures_Value'] > 0]
-    df_without_mitigation = df_risks[df_risks['Cost of Measures_Value'] == 0]
+    # Calculate opportunity values (these are negative, so we use abs for display)
+    opp_initial = abs(df_opportunities['Initial_EV'].sum()) if len(df_opportunities) > 0 else 0
+    opp_residual = abs(df_opportunities['Residual_EV'].sum()) if len(df_opportunities) > 0 else 0
+    opp_change = opp_residual - opp_initial  # Positive if opportunity improved
 
-    # Calculate values for each category
-    mitigated_initial = df_with_mitigation['Initial_EV'].sum()
-    unmitigated_initial = df_without_mitigation['Initial_EV'].sum()
+    # Net exposure calculations
+    net_initial = threat_initial - opp_initial  # Threats minus opportunities
+    net_residual = threat_residual - opp_residual
 
-    mitigated_residual = df_with_mitigation['Residual_EV'].abs().sum()
-    unmitigated_residual = df_without_mitigation['Residual_EV'].abs().sum()
+    # Node labels - Threats flow (red tones), Opportunities flow (green tones)
+    # Node indices:
+    # 0: Initial Threats
+    # 1: Threat Reduced
+    # 2: Residual Threats
+    # 3: Initial Opportunities (shown as benefit)
+    # 4: Opportunity Enhanced (if improved)
+    # 5: Residual Opportunities
+    # 6: Net Residual Exposure
 
-    risk_eliminated = max(0, mitigated_initial - mitigated_residual)
-
-    # Define node labels with cleaner formatting (values on separate line)
     labels = [
-        f"Initial Risk\n{total_initial_ev/1e6:.1f}M CHF",           # 0
-        f"Mitigated Risks\n{mitigated_initial/1e6:.1f}M CHF",       # 1
-        f"Unmitigated Risks\n{unmitigated_initial/1e6:.1f}M CHF",   # 2
-        f"Risk Eliminated\n{risk_eliminated/1e6:.1f}M CHF",         # 3
-        f"Residual (Mitigated)\n{mitigated_residual/1e6:.1f}M CHF", # 4
-        f"Residual (Unmitigated)\n{unmitigated_residual/1e6:.1f}M CHF", # 5
-        f"Total Residual\n{total_residual_ev/1e6:.1f}M CHF"         # 6
+        f"Initial Threats\n{threat_initial/1e6:.1f}M CHF",                    # 0
+        f"Threat Reduced\n{threat_reduced/1e6:.1f}M CHF",                     # 1
+        f"Residual Threats\n{threat_residual/1e6:.1f}M CHF",                  # 2
+        f"Initial Opportunities\n-{opp_initial/1e6:.1f}M CHF",                # 3
+        f"Opp. Change\n{opp_change/1e6:+.1f}M CHF",                           # 4
+        f"Residual Opportunities\n-{opp_residual/1e6:.1f}M CHF",              # 5
+        f"Net Residual\n{net_residual/1e6:.1f}M CHF"                          # 6
     ]
 
-    # Colors for nodes (more vibrant for visibility)
+    # Colors: Red tones for threats, Green/Blue tones for opportunities
     colors = [
-        "#C0392B",  # 0: Initial Risk - Dark Red
-        "#D35400",  # 1: Mitigated Risks - Dark Orange
-        "#8E44AD",  # 2: Unmitigated Risks - Purple
-        "#1E8449",  # 3: Risk Eliminated - Dark Green
-        "#2471A3",  # 4: Residual (Mitigated) - Dark Blue
-        "#6C3483",  # 5: Residual (Unmitigated) - Dark Purple
-        "#B9770E"   # 6: Total Residual - Dark Gold
+        "#C0392B",  # 0: Initial Threats - Dark Red
+        "#27AE60",  # 1: Threat Reduced - Green (good!)
+        "#E74C3C",  # 2: Residual Threats - Red
+        "#1ABC9C",  # 3: Initial Opportunities - Teal
+        "#16A085",  # 4: Opportunity Change - Dark Teal
+        "#2ECC71",  # 5: Residual Opportunities - Green
+        "#8E44AD"   # 6: Net Residual - Purple
     ]
 
-    # Define links (source, target, value)
     links_source = []
     links_target = []
     links_value = []
     links_color = []
 
-    # Flow 1: Initial Risk -> Mitigated Risks (if > 0)
-    if mitigated_initial > 0:
+    # Threat flows (warm colors)
+    # Flow: Initial Threats -> Threat Reduced
+    if threat_reduced > 0:
         links_source.append(0)
         links_target.append(1)
-        links_value.append(mitigated_initial)
-        links_color.append("rgba(211, 84, 0, 0.6)")  # Orange
+        links_value.append(threat_reduced)
+        links_color.append("rgba(39, 174, 96, 0.6)")  # Green - reduction is good
 
-    # Flow 2: Initial Risk -> Unmitigated Risks (if > 0)
-    if unmitigated_initial > 0:
+    # Flow: Initial Threats -> Residual Threats
+    if threat_residual > 0:
         links_source.append(0)
         links_target.append(2)
-        links_value.append(unmitigated_initial)
-        links_color.append("rgba(142, 68, 173, 0.6)")  # Purple
+        links_value.append(threat_residual)
+        links_color.append("rgba(231, 76, 60, 0.6)")  # Red
 
-    # Flow 3: Mitigated Risks -> Risk Eliminated (if > 0)
-    if risk_eliminated > 0:
-        links_source.append(1)
-        links_target.append(3)
-        links_value.append(risk_eliminated)
-        links_color.append("rgba(30, 132, 73, 0.6)")  # Green
-
-    # Flow 4: Mitigated Risks -> Residual (Mitigated) (if > 0)
-    if mitigated_residual > 0:
-        links_source.append(1)
-        links_target.append(4)
-        links_value.append(mitigated_residual)
-        links_color.append("rgba(36, 113, 163, 0.6)")  # Blue
-
-    # Flow 5: Unmitigated Risks -> Residual (Unmitigated) (if > 0)
-    if unmitigated_residual > 0:
+    # Flow: Residual Threats -> Net Residual
+    if threat_residual > 0:
         links_source.append(2)
-        links_target.append(5)
-        links_value.append(unmitigated_residual)
-        links_color.append("rgba(108, 52, 131, 0.6)")  # Dark Purple
-
-    # Flow 6: Residual (Mitigated) -> Total Residual (if > 0)
-    if mitigated_residual > 0:
-        links_source.append(4)
         links_target.append(6)
-        links_value.append(mitigated_residual)
-        links_color.append("rgba(185, 119, 14, 0.6)")  # Gold
+        links_value.append(threat_residual)
+        links_color.append("rgba(142, 68, 173, 0.5)")  # Purple
 
-    # Flow 7: Residual (Unmitigated) -> Total Residual (if > 0)
-    if unmitigated_residual > 0:
-        links_source.append(5)
-        links_target.append(6)
-        links_value.append(unmitigated_residual)
-        links_color.append("rgba(185, 119, 14, 0.6)")  # Gold
+    # Opportunity flows (cool colors) - only if opportunities exist
+    if len(df_opportunities) > 0:
+        # Flow: Initial Opportunities -> Opportunity Change (if changed)
+        if abs(opp_change) > 0:
+            links_source.append(3)
+            links_target.append(4)
+            links_value.append(abs(opp_change))
+            links_color.append("rgba(22, 160, 133, 0.6)")  # Teal
+
+        # Flow: Initial Opportunities -> Residual Opportunities
+        # The flow represents the portion that remains
+        min_opp = min(opp_initial, opp_residual)
+        if min_opp > 0:
+            links_source.append(3)
+            links_target.append(5)
+            links_value.append(min_opp)
+            links_color.append("rgba(46, 204, 113, 0.6)")  # Green
+
+        # If opportunity improved (residual > initial), add flow from change to residual
+        if opp_change > 0:
+            links_source.append(4)
+            links_target.append(5)
+            links_value.append(opp_change)
+            links_color.append("rgba(46, 204, 113, 0.6)")  # Green
 
     fig = go.Figure(data=[go.Sankey(
         node=dict(
-            pad=25,
-            thickness=30,
+            pad=30,
+            thickness=35,
             line=dict(color="black", width=2),
             label=labels,
             color=colors,
@@ -1148,25 +1202,25 @@ def create_risk_sankey(df, initial_stats, residual_stats, confidence_level='P95'
         textfont=dict(size=14, color='black', family='Arial Black')
     )])
 
-    # Calculate reduction percentage
-    reduction_pct = (risk_eliminated / total_initial_ev * 100) if total_initial_ev > 0 else 0
-
-    # Count opportunities excluded
-    opportunities_count = len(df[df['Initial_EV'] <= 0])
-    opportunities_note = f" | Opportunities excluded: {opportunities_count}" if opportunities_count > 0 else ""
+    # Calculate metrics for title
+    threat_reduction_pct = (threat_reduced / threat_initial * 100) if threat_initial > 0 else 0
+    opp_count = len(df_opportunities)
+    threat_count = len(df_threats)
 
     fig.update_layout(
         title={
-            'text': f'<b>Risk Mitigation Flow</b><br><sup>Initial risk → Mitigation → Residual | '
-                   f'Total Reduction: {reduction_pct:.1f}%{opportunities_note}</sup>',
-            'font': {'size': 18, 'color': '#2C3E50'},
+            'text': f'<b>Risk Mitigation Flow: Threats & Opportunities</b><br>'
+                   f'<sup>{threat_count} Threats (Initial: {threat_initial/1e6:.1f}M, Reduced: {threat_reduction_pct:.0f}%) | '
+                   f'{opp_count} Opportunities (Benefit: {opp_residual/1e6:.1f}M) | '
+                   f'Net Exposure: {net_residual/1e6:.1f}M CHF</sup>',
+            'font': {'size': 16, 'color': '#2C3E50'},
             'x': 0.5,
             'xanchor': 'center'
         },
         font=dict(size=14, color='#2C3E50', family='Arial'),
         height=550,
         paper_bgcolor='#FAFAFA',
-        margin=dict(l=20, r=20, t=80, b=20)
+        margin=dict(l=30, r=30, t=100, b=30)
     )
 
     return fig
@@ -2023,8 +2077,66 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
 
     doc.add_paragraph()  # Spacing
 
+    # ========== THREAT VS OPPORTUNITY ANALYSIS SECTION ==========
+    # Calculate threat/opportunity metrics
+    to_metrics = calculate_threat_opportunity_metrics(df)
+
+    to_heading = doc.add_heading('Threat vs Opportunity Analysis (Expected Values)', 2)
+    for run in to_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    to_intro = doc.add_paragraph()
+    to_intro_run = to_intro.add_run(
+        'In quantitative risk analysis, threats and opportunities are calculated separately. '
+        'Threats represent potential costs (positive EV), while opportunities represent potential benefits (negative EV). '
+        'Net Exposure = Threat EV + Opportunity EV.'
+    )
+    to_intro_run.font.name = 'Calibri'
+    to_intro_run.font.size = Pt(10)
+    to_intro_run.font.italic = True
+    to_intro_run.font.color.rgb = RGBColor(89, 89, 89)
+
+    # Create table for threat/opportunity metrics
+    to_table = doc.add_table(rows=8, cols=3)
+
+    to_table.rows[0].cells[0].text = 'Category'
+    to_table.rows[0].cells[1].text = 'Initial (M CHF)'
+    to_table.rows[0].cells[2].text = 'Residual (M CHF)'
+
+    to_table_data = [
+        (f'Threats ({to_metrics["threat_count"]} risks)',
+         f'{to_metrics["threat_initial_ev"]/1e6:.2f}',
+         f'{to_metrics["threat_residual_ev"]/1e6:.2f}'),
+        (f'Opportunities ({to_metrics["opportunity_count"]} risks)',
+         f'{to_metrics["opportunity_initial_ev"]/1e6:.2f}',
+         f'{to_metrics["opportunity_residual_ev"]/1e6:.2f}'),
+        ('Net Exposure',
+         f'{to_metrics["net_initial_exposure"]/1e6:.2f}',
+         f'{to_metrics["net_residual_exposure"]/1e6:.2f}'),
+        ('', '', ''),
+        ('Threat Reduction',
+         f'{to_metrics["threat_reduction"]/1e6:.2f}',
+         f'{(to_metrics["threat_reduction"]/to_metrics["threat_initial_ev"]*100) if to_metrics["threat_initial_ev"] > 0 else 0:.1f}%'),
+        ('Opportunity Change',
+         f'{to_metrics["opportunity_change"]/1e6:.2f}',
+         'Enhanced' if to_metrics["opportunity_change"] < 0 else 'Unchanged'),
+        ('Net Reduction',
+         f'{to_metrics["net_reduction"]/1e6:.2f}',
+         f'{(to_metrics["net_reduction"]/to_metrics["net_initial_exposure"]*100) if to_metrics["net_initial_exposure"] > 0 else 0:.1f}%'),
+    ]
+
+    for i, (cat, initial, residual) in enumerate(to_table_data, 1):
+        to_table.rows[i].cells[0].text = cat
+        to_table.rows[i].cells[1].text = initial
+        to_table.rows[i].cells[2].text = residual
+
+    format_table_executive(to_table, has_header=True, highlight_rows=[3, 7])
+
+    doc.add_paragraph()  # Spacing
+
     # ========== DETERMINISTIC METRICS SECTION ==========
-    det_heading = doc.add_heading('Deterministic Risk Metrics (Expected Values)', 2)
+    det_heading = doc.add_heading('Overall Risk Metrics (Expected Values)', 2)
     for run in det_heading.runs:
         run.font.name = 'Calibri'
         run.font.color.rgb = RGBColor(31, 78, 120)
@@ -2780,7 +2892,64 @@ def main():
             # Display active confidence level
             st.info(f"📊 **Active Confidence Level: {confidence_level}** | Showing risk exposure at {confidence_level} percentile")
 
-            # Key metrics
+            # Calculate threat/opportunity metrics
+            to_metrics = calculate_threat_opportunity_metrics(df_with_roi)
+
+            # Primary metrics row - Threat EV, Opportunity EV, Net Exposure
+            st.subheader("📊 Risk Exposure Summary (Expected Value)")
+
+            primary_col1, primary_col2, primary_col3, primary_col4 = st.columns(4)
+
+            with primary_col1:
+                st.metric(
+                    "Threat EV (Initial)",
+                    f"{to_metrics['threat_initial_ev']/1e6:.2f}M CHF",
+                    help=f"{to_metrics['threat_count']} threats identified"
+                )
+                st.metric(
+                    "Threat EV (Residual)",
+                    f"{to_metrics['threat_residual_ev']/1e6:.2f}M CHF",
+                    delta=f"{-to_metrics['threat_reduction']/1e6:.2f}M" if to_metrics['threat_reduction'] > 0 else None
+                )
+
+            with primary_col2:
+                # Opportunity EV is negative, so we show absolute value with a minus sign for clarity
+                st.metric(
+                    "Opportunity EV (Initial)",
+                    f"{to_metrics['opportunity_initial_ev']/1e6:.2f}M CHF",
+                    help=f"{to_metrics['opportunity_count']} opportunities identified (negative = benefit)"
+                )
+                st.metric(
+                    "Opportunity EV (Residual)",
+                    f"{to_metrics['opportunity_residual_ev']/1e6:.2f}M CHF",
+                    delta=f"{-to_metrics['opportunity_change']/1e6:.2f}M" if to_metrics['opportunity_change'] != 0 else None
+                )
+
+            with primary_col3:
+                # Net Exposure = Threat EV + Opportunity EV (where Opportunity is negative)
+                st.metric(
+                    "Net Exposure (Initial)",
+                    f"{to_metrics['net_initial_exposure']/1e6:.2f}M CHF",
+                    help="Threat EV + Opportunity EV"
+                )
+                st.metric(
+                    "Net Exposure (Residual)",
+                    f"{to_metrics['net_residual_exposure']/1e6:.2f}M CHF",
+                    delta=f"{-to_metrics['net_reduction']/1e6:.2f}M" if to_metrics['net_reduction'] != 0 else None
+                )
+
+            with primary_col4:
+                st.metric("Total Risks", len(df))
+                st.metric(
+                    "Threats / Opportunities",
+                    f"{to_metrics['threat_count']} / {to_metrics['opportunity_count']}"
+                )
+
+            st.markdown("---")
+
+            # Monte Carlo Results - Key metrics
+            st.subheader("🎲 Monte Carlo Simulation Results")
+
             col1, col2, col3, col4 = st.columns(4)
 
             # Get confidence-specific values
@@ -2788,23 +2957,24 @@ def main():
             residual_confidence_value = get_confidence_value(residual_stats, confidence_level)
 
             with col1:
-                st.metric("Total Risks", len(df))
-                st.metric("Risks with Schedule Impact", df['Schedule_Impact'].sum())
-
-            with col2:
                 st.metric(f"Initial Risk ({confidence_level})", f"{initial_confidence_value/1e6:.2f}M CHF")
                 st.metric("Initial Risk (Mean)", f"{initial_stats['mean']/1e6:.2f}M CHF")
 
-            with col3:
+            with col2:
                 st.metric(f"Residual Risk ({confidence_level})", f"{residual_confidence_value/1e6:.2f}M CHF")
                 st.metric("Residual Risk (Mean)", f"{residual_stats['mean']/1e6:.2f}M CHF")
 
-            with col4:
-                risk_reduction = ((initial_confidence_value - residual_confidence_value) / initial_confidence_value * 100)
+            with col3:
+                risk_reduction = ((initial_confidence_value - residual_confidence_value) / initial_confidence_value * 100) if initial_confidence_value != 0 else 0
                 st.metric(f"Risk Reduction ({confidence_level})", f"{risk_reduction:.1f}%")
                 total_mitigation_cost = df['Cost of Measures_Value'].sum()
                 st.metric("Total Mitigation Cost", f"{total_mitigation_cost/1e6:.2f}M CHF")
-            
+
+            with col4:
+                st.metric("Risks with Schedule Impact", df['Schedule_Impact'].sum())
+                net_benefit = (initial_confidence_value - residual_confidence_value) - total_mitigation_cost
+                st.metric("Net Benefit", f"{net_benefit/1e6:.2f}M CHF")
+
             st.markdown("---")
             
             # Tornado chart
@@ -3164,52 +3334,77 @@ def main():
 
                 st.markdown("""
                 The Sankey diagram below visualizes how risk flows through the mitigation process:
-                - **Initial Risk** splits into risks with and without mitigation measures
-                - **Mitigated risks** show the portion eliminated vs remaining (residual)
-                - **Green flows** represent successfully reduced risk
-                - **Blue/Orange flows** represent residual risk that remains
+                - **Threats** (red tones): Potential costs/losses that flow from initial → reduced → residual
+                - **Opportunities** (green/teal tones): Potential benefits that offset the threat exposure
+                - **Net Exposure**: Threat EV minus Opportunity EV (shown in purple)
                 """)
 
                 # Sankey view selector
                 sankey_view = st.radio(
                     "Select View:",
-                    options=["By Mitigation Status", "By Schedule Impact"],
+                    options=["Threats & Opportunities", "By Schedule Impact"],
                     horizontal=True,
                     help="Choose how to visualize the risk flow breakdown"
                 )
 
-                if sankey_view == "By Mitigation Status":
+                if sankey_view == "Threats & Opportunities":
                     sankey_fig = create_risk_sankey(df_with_roi, initial_stats, residual_stats, confidence_level)
                 else:
                     sankey_fig = create_risk_sankey_detailed(df_with_roi)
 
                 st.plotly_chart(sankey_fig, use_container_width=True)
 
-                # Summary statistics below Sankey
-                st.markdown("##### Flow Summary")
+                # Summary statistics below Sankey - now using threat/opportunity breakdown
+                st.markdown("##### Flow Summary: Threats vs Opportunities")
 
-                # Filter to only include risks (positive EV), excluding opportunities
-                df_risks_only = df_with_roi[df_with_roi['Initial_EV'] > 0]
-                opportunities_count = len(df_with_roi[df_with_roi['Initial_EV'] <= 0])
+                # Calculate threat/opportunity metrics
+                to_flow_metrics = calculate_threat_opportunity_metrics(df_with_roi)
 
                 flow_col1, flow_col2, flow_col3, flow_col4 = st.columns(4)
 
-                total_initial_ev = df_risks_only['Initial_EV'].sum()
-                total_residual_ev = df_risks_only['Residual_EV'].abs().sum()
-                total_reduced = max(0, total_initial_ev - total_residual_ev)
-                reduction_pct = (total_reduced / total_initial_ev * 100) if total_initial_ev > 0 else 0
-
                 with flow_col1:
-                    st.metric("Initial Risk (EV)", f"{total_initial_ev/1e6:.2f}M CHF",
-                             help=f"Sum of risks only. {opportunities_count} opportunities excluded." if opportunities_count > 0 else None)
+                    st.metric(
+                        "Threat EV (Initial)",
+                        f"{to_flow_metrics['threat_initial_ev']/1e6:.2f}M CHF",
+                        help=f"{to_flow_metrics['threat_count']} threats"
+                    )
+                    st.metric(
+                        "Threat EV (Residual)",
+                        f"{to_flow_metrics['threat_residual_ev']/1e6:.2f}M CHF"
+                    )
+
                 with flow_col2:
-                    st.metric("Risk Eliminated", f"{total_reduced/1e6:.2f}M CHF", delta=f"-{reduction_pct:.1f}%")
+                    st.metric(
+                        "Opportunity EV (Initial)",
+                        f"{to_flow_metrics['opportunity_initial_ev']/1e6:.2f}M CHF",
+                        help=f"{to_flow_metrics['opportunity_count']} opportunities (negative = benefit)"
+                    )
+                    st.metric(
+                        "Opportunity EV (Residual)",
+                        f"{to_flow_metrics['opportunity_residual_ev']/1e6:.2f}M CHF"
+                    )
+
                 with flow_col3:
-                    st.metric("Residual Risk (EV)", f"{total_residual_ev/1e6:.2f}M CHF")
+                    st.metric(
+                        "Net Exposure (Initial)",
+                        f"{to_flow_metrics['net_initial_exposure']/1e6:.2f}M CHF",
+                        help="Threat EV + Opportunity EV"
+                    )
+                    st.metric(
+                        "Net Exposure (Residual)",
+                        f"{to_flow_metrics['net_residual_exposure']/1e6:.2f}M CHF"
+                    )
+
                 with flow_col4:
-                    mitigation_efficiency = (total_reduced / total_cost * 100) if total_cost > 0 else 0
+                    threat_reduction_pct = (to_flow_metrics['threat_reduction'] / to_flow_metrics['threat_initial_ev'] * 100) if to_flow_metrics['threat_initial_ev'] > 0 else 0
+                    st.metric(
+                        "Threat Reduction",
+                        f"{to_flow_metrics['threat_reduction']/1e6:.2f}M CHF",
+                        delta=f"-{threat_reduction_pct:.1f}%"
+                    )
+                    mitigation_efficiency = (to_flow_metrics['threat_reduction'] / total_cost * 100) if total_cost > 0 else 0
                     st.metric("Mitigation Efficiency", f"{mitigation_efficiency:.0f}%",
-                             help="Risk reduced per CHF spent (as %)")
+                             help="Threat reduced per CHF spent")
 
             else:
                 st.warning("No risks with mitigation measures found in the register.")
