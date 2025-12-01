@@ -1014,6 +1014,270 @@ def create_scenario_impact_table(df, scenario_adjustments, risk_type='initial'):
     return pd.DataFrame(modified_risks) if modified_risks else None
 
 # ============================================================================
+# SANKEY DIAGRAM FOR RISK FLOW
+# ============================================================================
+
+def create_risk_sankey(df, initial_stats, residual_stats, confidence_level='P95'):
+    """
+    Create a Sankey diagram showing the flow of risk through mitigation.
+
+    Shows how initial risk exposure flows through mitigation measures
+    to result in residual risk, with breakdown by mitigation status.
+
+    Parameters:
+    - df: DataFrame with risk data including Initial_EV, Residual_EV, Risk_Reduction
+    - initial_stats: Statistics dict for initial risk (from Monte Carlo)
+    - residual_stats: Statistics dict for residual risk (from Monte Carlo)
+    - confidence_level: Selected confidence level (P50, P80, P95)
+    """
+
+    # Calculate totals
+    total_initial_ev = df['Initial_EV'].sum()
+    total_residual_ev = df['Residual_EV'].sum()
+    total_risk_reduction = df['Risk_Reduction'].sum()
+    total_mitigation_cost = df['Cost of Measures_Value'].sum()
+
+    # Separate risks with and without mitigation
+    df_with_mitigation = df[df['Cost of Measures_Value'] > 0]
+    df_without_mitigation = df[df['Cost of Measures_Value'] == 0]
+
+    # Calculate values for each category
+    mitigated_initial = df_with_mitigation['Initial_EV'].sum()
+    unmitigated_initial = df_without_mitigation['Initial_EV'].sum()
+
+    mitigated_residual = df_with_mitigation['Residual_EV'].sum()
+    unmitigated_residual = df_without_mitigation['Residual_EV'].sum()
+
+    risk_eliminated = df_with_mitigation['Risk_Reduction'].sum()
+
+    # Calculate net benefit (risk reduction - cost)
+    net_benefit = risk_eliminated - total_mitigation_cost
+
+    # Define node labels and colors
+    # Node indices:
+    # 0: Total Initial Risk
+    # 1: Risks with Mitigation (Initial)
+    # 2: Risks without Mitigation (Initial)
+    # 3: Risk Eliminated
+    # 4: Mitigated Residual Risk
+    # 5: Unmitigated Residual Risk
+    # 6: Total Residual Risk
+
+    labels = [
+        f"Initial Risk<br>{total_initial_ev/1e6:.1f}M CHF",           # 0
+        f"Mitigated Risks<br>{mitigated_initial/1e6:.1f}M CHF",       # 1
+        f"Unmitigated Risks<br>{unmitigated_initial/1e6:.1f}M CHF",   # 2
+        f"Risk Eliminated<br>{risk_eliminated/1e6:.1f}M CHF",         # 3
+        f"Residual (Mitigated)<br>{mitigated_residual/1e6:.1f}M CHF", # 4
+        f"Residual (Unmitigated)<br>{unmitigated_residual/1e6:.1f}M CHF", # 5
+        f"Total Residual<br>{total_residual_ev/1e6:.1f}M CHF"         # 6
+    ]
+
+    # Colors for nodes
+    colors = [
+        "#E74C3C",  # 0: Initial Risk - Red
+        "#F39C12",  # 1: Mitigated Risks - Orange
+        "#9B59B6",  # 2: Unmitigated Risks - Purple
+        "#27AE60",  # 3: Risk Eliminated - Green
+        "#3498DB",  # 4: Residual (Mitigated) - Blue
+        "#8E44AD",  # 5: Residual (Unmitigated) - Dark Purple
+        "#E67E22"   # 6: Total Residual - Dark Orange
+    ]
+
+    # Define links (source, target, value)
+    # Handle cases where values might be zero
+    links_source = []
+    links_target = []
+    links_value = []
+    links_color = []
+
+    # Flow 1: Initial Risk -> Mitigated Risks (if > 0)
+    if mitigated_initial > 0:
+        links_source.append(0)
+        links_target.append(1)
+        links_value.append(mitigated_initial)
+        links_color.append("rgba(243, 156, 18, 0.5)")  # Orange
+
+    # Flow 2: Initial Risk -> Unmitigated Risks (if > 0)
+    if unmitigated_initial > 0:
+        links_source.append(0)
+        links_target.append(2)
+        links_value.append(unmitigated_initial)
+        links_color.append("rgba(155, 89, 182, 0.5)")  # Purple
+
+    # Flow 3: Mitigated Risks -> Risk Eliminated (if > 0)
+    if risk_eliminated > 0:
+        links_source.append(1)
+        links_target.append(3)
+        links_value.append(risk_eliminated)
+        links_color.append("rgba(39, 174, 96, 0.5)")  # Green
+
+    # Flow 4: Mitigated Risks -> Residual (Mitigated) (if > 0)
+    if mitigated_residual > 0:
+        links_source.append(1)
+        links_target.append(4)
+        links_value.append(mitigated_residual)
+        links_color.append("rgba(52, 152, 219, 0.5)")  # Blue
+
+    # Flow 5: Unmitigated Risks -> Residual (Unmitigated) (if > 0)
+    if unmitigated_residual > 0:
+        links_source.append(2)
+        links_target.append(5)
+        links_value.append(unmitigated_residual)
+        links_color.append("rgba(142, 68, 173, 0.5)")  # Dark Purple
+
+    # Flow 6: Residual (Mitigated) -> Total Residual (if > 0)
+    if mitigated_residual > 0:
+        links_source.append(4)
+        links_target.append(6)
+        links_value.append(mitigated_residual)
+        links_color.append("rgba(230, 126, 34, 0.5)")  # Dark Orange
+
+    # Flow 7: Residual (Unmitigated) -> Total Residual (if > 0)
+    if unmitigated_residual > 0:
+        links_source.append(5)
+        links_target.append(6)
+        links_value.append(unmitigated_residual)
+        links_color.append("rgba(230, 126, 34, 0.5)")  # Dark Orange
+
+    fig = go.Figure(data=[go.Sankey(
+        node=dict(
+            pad=20,
+            thickness=25,
+            line=dict(color="black", width=1),
+            label=labels,
+            color=colors,
+            hovertemplate='%{label}<extra></extra>'
+        ),
+        link=dict(
+            source=links_source,
+            target=links_target,
+            value=links_value,
+            color=links_color,
+            hovertemplate='%{source.label} → %{target.label}<br>Value: %{value:,.0f} CHF<extra></extra>'
+        )
+    )])
+
+    # Calculate reduction percentage
+    reduction_pct = (risk_eliminated / total_initial_ev * 100) if total_initial_ev > 0 else 0
+
+    fig.update_layout(
+        title={
+            'text': f'Risk Mitigation Flow<br><sub>Showing how initial risk flows through mitigation to residual risk | '
+                   f'Total Reduction: {reduction_pct:.1f}%</sub>',
+            'font': {'size': 16}
+        },
+        font=dict(size=11),
+        height=500,
+        paper_bgcolor='white'
+    )
+
+    return fig
+
+def create_risk_sankey_detailed(df):
+    """
+    Create a more detailed Sankey diagram with risk categories.
+
+    Shows risk flow broken down by schedule impact status.
+    """
+
+    # Separate by schedule impact
+    df_schedule = df[df['Schedule_Impact'] == True]
+    df_no_schedule = df[df['Schedule_Impact'] == False]
+
+    # Calculate values
+    total_initial = df['Initial_EV'].sum()
+    schedule_initial = df_schedule['Initial_EV'].sum()
+    no_schedule_initial = df_no_schedule['Initial_EV'].sum()
+
+    schedule_residual = df_schedule['Residual_EV'].sum()
+    no_schedule_residual = df_no_schedule['Residual_EV'].sum()
+
+    schedule_reduced = df_schedule['Risk_Reduction'].sum()
+    no_schedule_reduced = df_no_schedule['Risk_Reduction'].sum()
+
+    total_residual = df['Residual_EV'].sum()
+    total_reduced = df['Risk_Reduction'].sum()
+
+    labels = [
+        f"Total Initial Risk<br>{total_initial/1e6:.1f}M CHF",        # 0
+        f"Schedule Impact<br>{schedule_initial/1e6:.1f}M CHF",         # 1
+        f"No Schedule Impact<br>{no_schedule_initial/1e6:.1f}M CHF",   # 2
+        f"Reduced (Schedule)<br>{schedule_reduced/1e6:.1f}M CHF",      # 3
+        f"Reduced (No Schedule)<br>{no_schedule_reduced/1e6:.1f}M CHF",# 4
+        f"Residual (Schedule)<br>{schedule_residual/1e6:.1f}M CHF",    # 5
+        f"Residual (No Schedule)<br>{no_schedule_residual/1e6:.1f}M CHF", # 6
+        f"Total Risk Reduced<br>{total_reduced/1e6:.1f}M CHF",         # 7
+        f"Total Residual<br>{total_residual/1e6:.1f}M CHF"             # 8
+    ]
+
+    colors = [
+        "#E74C3C",  # Total Initial - Red
+        "#C0392B",  # Schedule Impact - Dark Red
+        "#E67E22",  # No Schedule Impact - Orange
+        "#27AE60",  # Reduced (Schedule) - Green
+        "#2ECC71",  # Reduced (No Schedule) - Light Green
+        "#3498DB",  # Residual (Schedule) - Blue
+        "#5DADE2",  # Residual (No Schedule) - Light Blue
+        "#1ABC9C",  # Total Reduced - Teal
+        "#F39C12"   # Total Residual - Yellow
+    ]
+
+    # Build links dynamically (skip zero values)
+    links_source = []
+    links_target = []
+    links_value = []
+    links_color = []
+
+    link_definitions = [
+        (0, 1, schedule_initial, "rgba(192, 57, 43, 0.4)"),
+        (0, 2, no_schedule_initial, "rgba(230, 126, 34, 0.4)"),
+        (1, 3, schedule_reduced, "rgba(39, 174, 96, 0.4)"),
+        (1, 5, schedule_residual, "rgba(52, 152, 219, 0.4)"),
+        (2, 4, no_schedule_reduced, "rgba(46, 204, 113, 0.4)"),
+        (2, 6, no_schedule_residual, "rgba(93, 173, 226, 0.4)"),
+        (3, 7, schedule_reduced, "rgba(26, 188, 156, 0.4)"),
+        (4, 7, no_schedule_reduced, "rgba(26, 188, 156, 0.4)"),
+        (5, 8, schedule_residual, "rgba(243, 156, 18, 0.4)"),
+        (6, 8, no_schedule_residual, "rgba(243, 156, 18, 0.4)")
+    ]
+
+    for source, target, value, color in link_definitions:
+        if value > 0:
+            links_source.append(source)
+            links_target.append(target)
+            links_value.append(value)
+            links_color.append(color)
+
+    fig = go.Figure(data=[go.Sankey(
+        node=dict(
+            pad=20,
+            thickness=25,
+            line=dict(color="black", width=1),
+            label=labels,
+            color=colors
+        ),
+        link=dict(
+            source=links_source,
+            target=links_target,
+            value=links_value,
+            color=links_color
+        )
+    )])
+
+    fig.update_layout(
+        title={
+            'text': 'Risk Flow by Schedule Impact<br><sub>Breakdown of risk reduction by schedule impact category</sub>',
+            'font': {'size': 16}
+        },
+        font=dict(size=11),
+        height=550,
+        paper_bgcolor='white'
+    )
+
+    return fig
+
+# ============================================================================
 # DOCX Report Generation Functions
 # ============================================================================
 def set_cell_background(cell, fill_color):
@@ -2883,8 +3147,56 @@ def main():
                 
                 display_df['ROI (%)'] = display_df['ROI (%)'].apply(lambda x: f"{x:.1f}")
                 display_df['B/C Ratio'] = display_df['B/C Ratio'].apply(lambda x: f"{x:.2f}")
-                
+
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+                # Sankey Diagram Section
+                st.markdown("---")
+                st.subheader("🔄 Risk Mitigation Flow (Sankey Diagram)")
+
+                st.markdown("""
+                The Sankey diagram below visualizes how risk flows through the mitigation process:
+                - **Initial Risk** splits into risks with and without mitigation measures
+                - **Mitigated risks** show the portion eliminated vs remaining (residual)
+                - **Green flows** represent successfully reduced risk
+                - **Blue/Orange flows** represent residual risk that remains
+                """)
+
+                # Sankey view selector
+                sankey_view = st.radio(
+                    "Select View:",
+                    options=["By Mitigation Status", "By Schedule Impact"],
+                    horizontal=True,
+                    help="Choose how to visualize the risk flow breakdown"
+                )
+
+                if sankey_view == "By Mitigation Status":
+                    sankey_fig = create_risk_sankey(df_with_roi, initial_stats, residual_stats, confidence_level)
+                else:
+                    sankey_fig = create_risk_sankey_detailed(df_with_roi)
+
+                st.plotly_chart(sankey_fig, use_container_width=True)
+
+                # Summary statistics below Sankey
+                st.markdown("##### Flow Summary")
+                flow_col1, flow_col2, flow_col3, flow_col4 = st.columns(4)
+
+                total_initial_ev = df_with_roi['Initial_EV'].sum()
+                total_residual_ev = df_with_roi['Residual_EV'].sum()
+                total_reduced = df_with_roi['Risk_Reduction'].sum()
+                reduction_pct = (total_reduced / total_initial_ev * 100) if total_initial_ev > 0 else 0
+
+                with flow_col1:
+                    st.metric("Initial Risk (EV)", f"{total_initial_ev/1e6:.2f}M CHF")
+                with flow_col2:
+                    st.metric("Risk Eliminated", f"{total_reduced/1e6:.2f}M CHF", delta=f"-{reduction_pct:.1f}%")
+                with flow_col3:
+                    st.metric("Residual Risk (EV)", f"{total_residual_ev/1e6:.2f}M CHF")
+                with flow_col4:
+                    mitigation_efficiency = (total_reduced / total_cost * 100) if total_cost > 0 else 0
+                    st.metric("Mitigation Efficiency", f"{mitigation_efficiency:.0f}%",
+                             help="Risk reduced per CHF spent (as %)")
+
             else:
                 st.warning("No risks with mitigation measures found in the register.")
 
