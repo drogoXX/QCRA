@@ -796,7 +796,226 @@ def create_pareto_chart(sensitivity_df, top_n=20):
 
     return fig
 
+# ============================================================================
+# WHAT-IF SCENARIO ANALYSIS FUNCTIONS
+# ============================================================================
+
+def run_scenario_monte_carlo(df, scenario_adjustments, n_simulations=10000, risk_type='initial'):
+    """
+    Run Monte Carlo simulation with scenario adjustments applied
+
+    Parameters:
+    - df: Original DataFrame with risk data
+    - scenario_adjustments: Dict of {risk_id: {'likelihood': float, 'impact': float}}
+    - n_simulations: Number of Monte Carlo iterations
+    - risk_type: 'initial' or 'residual'
+
+    Returns:
+    - results: Array of simulation results
+    - modified_df: DataFrame with adjustments applied
+    """
+    # Create a copy of the dataframe to apply adjustments
+    modified_df = df.copy()
+
+    if risk_type == 'initial':
+        impact_col = 'Initial risk_Value'
+        likelihood_col = 'Initial_Likelihood'
+    else:
+        impact_col = 'Residual risk_Value'
+        likelihood_col = 'Residual_Likelihood'
+
+    # Apply scenario adjustments
+    for risk_id, adjustments in scenario_adjustments.items():
+        mask = modified_df['Risk ID'] == risk_id
+        if mask.any():
+            if 'likelihood' in adjustments:
+                modified_df.loc[mask, likelihood_col] = adjustments['likelihood']
+            if 'impact' in adjustments:
+                modified_df.loc[mask, impact_col] = adjustments['impact']
+
+    # Prepare data for simulation
+    impacts = modified_df[impact_col].values
+    likelihoods = modified_df[likelihood_col].values
+
+    # Generate random numbers
+    random_numbers = np.random.random((n_simulations, len(modified_df)))
+
+    # Monte Carlo simulation
+    results = np.zeros(n_simulations)
+
+    for i in range(n_simulations):
+        occurred = random_numbers[i] < likelihoods
+        results[i] = np.sum(impacts * occurred)
+
+    return results, modified_df
+
+def create_scenario_comparison_chart(baseline_stats, scenario_stats, scenario_name, confidence_level='P95'):
+    """Create a comparison chart between baseline and scenario results"""
+
+    metrics = ['Mean', 'P50', 'P80', 'P95']
+    baseline_values = [
+        baseline_stats['mean'] / 1e6,
+        baseline_stats['p50'] / 1e6,
+        baseline_stats['p80'] / 1e6,
+        baseline_stats['p95'] / 1e6
+    ]
+    scenario_values = [
+        scenario_stats['mean'] / 1e6,
+        scenario_stats['p50'] / 1e6,
+        scenario_stats['p80'] / 1e6,
+        scenario_stats['p95'] / 1e6
+    ]
+
+    fig = go.Figure()
+
+    # Baseline bars
+    fig.add_trace(go.Bar(
+        name='Baseline',
+        x=metrics,
+        y=baseline_values,
+        marker_color='#3498DB',
+        text=[f'{v:.2f}M' for v in baseline_values],
+        textposition='outside'
+    ))
+
+    # Scenario bars
+    fig.add_trace(go.Bar(
+        name=scenario_name,
+        x=metrics,
+        y=scenario_values,
+        marker_color='#E74C3C',
+        text=[f'{v:.2f}M' for v in scenario_values],
+        textposition='outside'
+    ))
+
+    # Highlight the selected confidence level
+    confidence_idx = metrics.index(confidence_level)
+
+    fig.update_layout(
+        title=f'Scenario Comparison: Baseline vs {scenario_name}',
+        xaxis_title='Metric',
+        yaxis_title='Risk Exposure (Million CHF)',
+        barmode='group',
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        )
+    )
+
+    return fig
+
+def create_scenario_cdf_comparison(baseline_results, scenario_results, baseline_stats, scenario_stats,
+                                    scenario_name, confidence_level='P95'):
+    """Create overlaid CDF curves for baseline vs scenario"""
+
+    # Sort results for CDF
+    baseline_sorted = np.sort(baseline_results)
+    scenario_sorted = np.sort(scenario_results)
+
+    # Create probability array (0 to 1)
+    n = len(baseline_sorted)
+    probabilities = np.arange(1, n + 1) / n
+
+    fig = go.Figure()
+
+    # Baseline CDF
+    fig.add_trace(go.Scatter(
+        x=baseline_sorted / 1e6,
+        y=probabilities * 100,
+        mode='lines',
+        name='Baseline',
+        line=dict(color='#3498DB', width=3)
+    ))
+
+    # Scenario CDF
+    fig.add_trace(go.Scatter(
+        x=scenario_sorted / 1e6,
+        y=probabilities * 100,
+        mode='lines',
+        name=scenario_name,
+        line=dict(color='#E74C3C', width=3)
+    ))
+
+    # Add confidence level lines
+    percentile_map = {'P50': 50, 'P80': 80, 'P95': 95}
+    conf_percentile = percentile_map[confidence_level]
+
+    # Horizontal line at confidence level
+    fig.add_hline(y=conf_percentile, line_dash='dash', line_color='#2ECC71', line_width=2,
+                  annotation_text=f'{confidence_level} Level', annotation_position='right')
+
+    # Vertical lines at baseline and scenario values
+    baseline_val = get_confidence_value(baseline_stats, confidence_level) / 1e6
+    scenario_val = get_confidence_value(scenario_stats, confidence_level) / 1e6
+
+    fig.add_vline(x=baseline_val, line_dash='dot', line_color='#3498DB', line_width=2)
+    fig.add_vline(x=scenario_val, line_dash='dot', line_color='#E74C3C', line_width=2)
+
+    fig.update_layout(
+        title=f'CDF Comparison: Baseline vs {scenario_name}',
+        xaxis_title='Total Risk Exposure (Million CHF)',
+        yaxis_title='Cumulative Probability (%)',
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        yaxis=dict(range=[0, 100])
+    )
+
+    return fig
+
+def create_scenario_impact_table(df, scenario_adjustments, risk_type='initial'):
+    """Create a table showing which risks were modified in the scenario"""
+
+    if risk_type == 'initial':
+        impact_col = 'Initial risk_Value'
+        likelihood_col = 'Initial_Likelihood'
+    else:
+        impact_col = 'Residual risk_Value'
+        likelihood_col = 'Residual_Likelihood'
+
+    modified_risks = []
+
+    for risk_id, adjustments in scenario_adjustments.items():
+        original_row = df[df['Risk ID'] == risk_id]
+        if len(original_row) > 0:
+            original_row = original_row.iloc[0]
+
+            orig_likelihood = original_row[likelihood_col]
+            orig_impact = original_row[impact_col]
+
+            new_likelihood = adjustments.get('likelihood', orig_likelihood)
+            new_impact = adjustments.get('impact', orig_impact)
+
+            orig_ev = orig_likelihood * orig_impact
+            new_ev = new_likelihood * new_impact
+            ev_change = new_ev - orig_ev
+
+            modified_risks.append({
+                'Risk ID': risk_id,
+                'Description': original_row['Risk Description'][:50] + '...' if len(str(original_row['Risk Description'])) > 50 else original_row['Risk Description'],
+                'Original Likelihood': f'{orig_likelihood*100:.1f}%',
+                'New Likelihood': f'{new_likelihood*100:.1f}%',
+                'Original Impact (M CHF)': f'{orig_impact/1e6:.2f}',
+                'New Impact (M CHF)': f'{new_impact/1e6:.2f}',
+                'EV Change (M CHF)': f'{ev_change/1e6:+.2f}'
+            })
+
+    return pd.DataFrame(modified_risks) if modified_risks else None
+
+# ============================================================================
 # DOCX Report Generation Functions
+# ============================================================================
 def set_cell_background(cell, fill_color):
     """Set background color for table cell"""
     from docx.oxml import parse_xml
@@ -2272,12 +2491,13 @@ def main():
         confidence_level = st.session_state.get('confidence_level', 'P95')
         
         # Create tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-            "📊 Dashboard", 
-            "📈 Risk Matrix & Heatmap", 
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            "📊 Dashboard",
+            "📈 Risk Matrix & Heatmap",
             "🔍 Sensitivity Analysis",
             "🎲 Monte Carlo Results",
             "💰 Cost-Benefit Analysis",
+            "🔮 What-If Scenarios",
             "📋 Risk Register",
             "📥 Export"
         ])
@@ -2667,8 +2887,288 @@ def main():
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
             else:
                 st.warning("No risks with mitigation measures found in the register.")
-        
+
         with tab6:
+            st.header("🔮 What-If Scenario Analysis")
+
+            st.markdown("""
+            Explore how changes to individual risks affect your overall portfolio exposure.
+            Create scenarios by adjusting risk likelihood and/or impact values, then compare against the baseline.
+            """)
+
+            # Initialize scenario adjustments in session state
+            if 'scenario_adjustments' not in st.session_state:
+                st.session_state.scenario_adjustments = {}
+            if 'scenario_results' not in st.session_state:
+                st.session_state.scenario_results = None
+
+            # Scenario configuration
+            col_name, col_type = st.columns([2, 1])
+
+            with col_name:
+                scenario_name = st.text_input(
+                    "Scenario Name",
+                    value="Custom Scenario",
+                    help="Give your scenario a descriptive name"
+                )
+
+            with col_type:
+                scenario_type = st.selectbox(
+                    "Scenario Type",
+                    options=["Custom", "Optimistic (-20%)", "Pessimistic (+20%)", "Best Case (-50%)", "Worst Case (+50%)"],
+                    help="Quick presets or create a custom scenario"
+                )
+
+            st.markdown("---")
+
+            # Handle preset scenarios
+            if scenario_type != "Custom":
+                st.subheader("📋 Preset Scenario")
+
+                preset_adjustments = {}
+                if scenario_type == "Optimistic (-20%)":
+                    factor = 0.8
+                    description = "All risks reduced by 20%"
+                elif scenario_type == "Pessimistic (+20%)":
+                    factor = 1.2
+                    description = "All risks increased by 20%"
+                elif scenario_type == "Best Case (-50%)":
+                    factor = 0.5
+                    description = "All risks reduced by 50%"
+                else:  # Worst Case
+                    factor = 1.5
+                    description = "All risks increased by 50%"
+
+                st.info(f"**{scenario_type}**: {description}")
+
+                # Apply factor to all risks
+                for _, row in df.iterrows():
+                    risk_id = row['Risk ID']
+                    preset_adjustments[risk_id] = {
+                        'likelihood': min(row['Initial_Likelihood'] * factor, 1.0),
+                        'impact': row['Initial risk_Value'] * factor
+                    }
+
+                if st.button("Apply Preset & Run Simulation", type="primary", key="preset_btn"):
+                    with st.spinner("Running scenario simulation..."):
+                        scenario_results, _ = run_scenario_monte_carlo(
+                            df, preset_adjustments, n_simulations, 'initial'
+                        )
+                        scenario_stats = calculate_statistics(scenario_results)
+
+                        st.session_state.scenario_results = {
+                            'name': f"{scenario_type}",
+                            'results': scenario_results,
+                            'stats': scenario_stats,
+                            'adjustments': preset_adjustments
+                        }
+                        st.success("Scenario simulation complete!")
+                        st.rerun()
+
+            else:
+                # Custom scenario builder
+                st.subheader("📝 Custom Scenario Builder")
+
+                # Risk selection
+                st.markdown("**Select risks to modify:**")
+
+                # Get top risks by expected value for quick selection
+                top_risks = df.nlargest(10, 'Initial_EV')[['Risk ID', 'Risk Description', 'Initial risk_Value', 'Initial_Likelihood']].copy()
+
+                selected_risks = st.multiselect(
+                    "Choose risks to adjust",
+                    options=df['Risk ID'].tolist(),
+                    default=list(st.session_state.scenario_adjustments.keys()),
+                    help="Select one or more risks to modify in this scenario"
+                )
+
+                # Display adjustment controls for selected risks
+                if selected_risks:
+                    st.markdown("**Adjust risk parameters:**")
+
+                    new_adjustments = {}
+
+                    for risk_id in selected_risks:
+                        risk_row = df[df['Risk ID'] == risk_id].iloc[0]
+
+                        with st.expander(f"📌 {risk_id}: {risk_row['Risk Description'][:60]}...", expanded=True):
+                            col1, col2, col3 = st.columns([1, 1, 1])
+
+                            # Get current adjustment or original value
+                            current_adjustment = st.session_state.scenario_adjustments.get(risk_id, {})
+                            orig_likelihood = risk_row['Initial_Likelihood']
+                            orig_impact = risk_row['Initial risk_Value']
+
+                            with col1:
+                                st.markdown("**Original Values:**")
+                                st.write(f"Likelihood: {orig_likelihood*100:.1f}%")
+                                st.write(f"Impact: {orig_impact/1e6:.2f}M CHF")
+                                st.write(f"EV: {(orig_likelihood * orig_impact)/1e6:.2f}M CHF")
+
+                            with col2:
+                                new_likelihood = st.slider(
+                                    f"New Likelihood (%)",
+                                    min_value=0,
+                                    max_value=100,
+                                    value=int(current_adjustment.get('likelihood', orig_likelihood) * 100),
+                                    key=f"lik_{risk_id}"
+                                ) / 100
+
+                            with col3:
+                                new_impact = st.number_input(
+                                    f"New Impact (M CHF)",
+                                    min_value=0.0,
+                                    max_value=float(df['Initial risk_Value'].max() / 1e6 * 2),
+                                    value=float(current_adjustment.get('impact', orig_impact) / 1e6),
+                                    step=0.1,
+                                    key=f"imp_{risk_id}"
+                                ) * 1e6
+
+                            # Store adjustment
+                            new_adjustments[risk_id] = {
+                                'likelihood': new_likelihood,
+                                'impact': new_impact
+                            }
+
+                            # Show change summary
+                            new_ev = new_likelihood * new_impact
+                            orig_ev = orig_likelihood * orig_impact
+                            ev_change = new_ev - orig_ev
+                            ev_change_pct = (ev_change / orig_ev * 100) if orig_ev > 0 else 0
+
+                            if ev_change < 0:
+                                st.success(f"📉 EV Change: {ev_change/1e6:+.2f}M CHF ({ev_change_pct:+.1f}%)")
+                            elif ev_change > 0:
+                                st.error(f"📈 EV Change: {ev_change/1e6:+.2f}M CHF ({ev_change_pct:+.1f}%)")
+                            else:
+                                st.info("No change in Expected Value")
+
+                    # Update session state
+                    st.session_state.scenario_adjustments = new_adjustments
+
+                    # Run simulation button
+                    st.markdown("---")
+                    col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+
+                    with col_btn2:
+                        if st.button("🚀 Run Scenario Simulation", type="primary", use_container_width=True):
+                            with st.spinner("Running Monte Carlo simulation for scenario..."):
+                                scenario_results, _ = run_scenario_monte_carlo(
+                                    df, new_adjustments, n_simulations, 'initial'
+                                )
+                                scenario_stats = calculate_statistics(scenario_results)
+
+                                st.session_state.scenario_results = {
+                                    'name': scenario_name,
+                                    'results': scenario_results,
+                                    'stats': scenario_stats,
+                                    'adjustments': new_adjustments
+                                }
+                                st.success("Scenario simulation complete!")
+                                st.rerun()
+
+                else:
+                    st.info("👆 Select one or more risks above to begin building your scenario.")
+
+                    # Show top risks as suggestions
+                    st.markdown("**💡 Suggested risks to explore (Top 10 by Expected Value):**")
+                    suggestion_df = top_risks.copy()
+                    suggestion_df['Initial risk_Value'] = suggestion_df['Initial risk_Value'].apply(lambda x: f"{x/1e6:.2f}M CHF")
+                    suggestion_df['Initial_Likelihood'] = suggestion_df['Initial_Likelihood'].apply(lambda x: f"{x*100:.1f}%")
+                    suggestion_df.columns = ['Risk ID', 'Description', 'Impact', 'Likelihood']
+                    st.dataframe(suggestion_df, use_container_width=True, hide_index=True)
+
+            # Display results if available
+            st.markdown("---")
+            st.subheader("📊 Scenario Comparison Results")
+
+            if st.session_state.scenario_results is not None:
+                scenario_data = st.session_state.scenario_results
+                scenario_stats = scenario_data['stats']
+                scenario_results = scenario_data['results']
+                scenario_display_name = scenario_data['name']
+
+                # Summary metrics
+                col1, col2, col3, col4 = st.columns(4)
+
+                baseline_conf_val = get_confidence_value(initial_stats, confidence_level)
+                scenario_conf_val = get_confidence_value(scenario_stats, confidence_level)
+                change = scenario_conf_val - baseline_conf_val
+                change_pct = (change / baseline_conf_val * 100) if baseline_conf_val > 0 else 0
+
+                with col1:
+                    st.metric(
+                        f"Baseline ({confidence_level})",
+                        f"{baseline_conf_val/1e6:.2f}M CHF"
+                    )
+
+                with col2:
+                    st.metric(
+                        f"Scenario ({confidence_level})",
+                        f"{scenario_conf_val/1e6:.2f}M CHF",
+                        delta=f"{change/1e6:+.2f}M CHF"
+                    )
+
+                with col3:
+                    st.metric(
+                        "Change",
+                        f"{change_pct:+.1f}%",
+                        delta="Reduced" if change < 0 else "Increased",
+                        delta_color="normal" if change < 0 else "inverse"
+                    )
+
+                with col4:
+                    risks_modified = len(scenario_data.get('adjustments', {}))
+                    st.metric("Risks Modified", risks_modified)
+
+                # Comparison charts
+                chart_col1, chart_col2 = st.columns(2)
+
+                with chart_col1:
+                    comparison_fig = create_scenario_comparison_chart(
+                        initial_stats, scenario_stats, scenario_display_name, confidence_level
+                    )
+                    st.plotly_chart(comparison_fig, use_container_width=True)
+
+                with chart_col2:
+                    cdf_fig = create_scenario_cdf_comparison(
+                        initial_results, scenario_results, initial_stats, scenario_stats,
+                        scenario_display_name, confidence_level
+                    )
+                    st.plotly_chart(cdf_fig, use_container_width=True)
+
+                # Modified risks table
+                if scenario_data.get('adjustments'):
+                    st.subheader("📋 Modified Risks Summary")
+                    impact_table = create_scenario_impact_table(df, scenario_data['adjustments'], 'initial')
+                    if impact_table is not None:
+                        st.dataframe(impact_table, use_container_width=True, hide_index=True)
+
+                # Clear results button
+                col_clear1, col_clear2, col_clear3 = st.columns([1, 1, 1])
+                with col_clear2:
+                    if st.button("🗑️ Clear Scenario Results", use_container_width=True):
+                        st.session_state.scenario_results = None
+                        st.session_state.scenario_adjustments = {}
+                        st.rerun()
+
+            else:
+                st.info("👆 Configure and run a scenario above to see comparison results here.")
+
+                # Show quick summary of baseline
+                st.markdown("**Current Baseline Summary:**")
+                baseline_summary = pd.DataFrame({
+                    'Metric': ['Mean', 'P50 (Median)', 'P80', 'P95'],
+                    'Initial Risk (M CHF)': [
+                        f"{initial_stats['mean']/1e6:.2f}",
+                        f"{initial_stats['p50']/1e6:.2f}",
+                        f"{initial_stats['p80']/1e6:.2f}",
+                        f"{initial_stats['p95']/1e6:.2f}"
+                    ]
+                })
+                st.dataframe(baseline_summary, use_container_width=True, hide_index=True)
+
+        with tab7:
             st.header("Risk Register")
 
             # Display portfolio-level confidence information
@@ -2728,8 +3228,8 @@ def main():
             display_df['B/C Ratio'] = display_df['B/C Ratio'].apply(lambda x: f"{x:.2f}")
             
             st.dataframe(display_df, use_container_width=True, hide_index=True, height=600)
-        
-        with tab7:
+
+        with tab8:
             st.header("Export Results")
             
             st.write("Download your risk assessment results in various formats:")
