@@ -1651,6 +1651,132 @@ def create_matplotlib_risk_matrix_combined(df):
     plt.close(fig)
     return buf
 
+def create_matplotlib_heatmap_combined(df):
+    """Create side-by-side risk heatmap comparison (initial vs residual) for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+    from matplotlib.patches import Rectangle
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+
+    # Define bins and labels
+    impact_bins = [0, 100000, 1000000, 10000000, 100000000, np.inf]
+    impact_labels = ['Very Low', 'Low', 'Medium', 'High', 'Very High']
+
+    likelihood_bins = [0, 0.1, 0.25, 0.5, 0.75, 1.0]
+    likelihood_labels = ['Very Low', 'Low', 'Medium', 'High', 'Very High']
+
+    # Risk severity color scale (green to red)
+    risk_colors = ['#2ECC71', '#F1C40F', '#E67E22', '#E74C3C', '#8E44AD']
+
+    def create_heatmap_data(df_temp, impact_col, likelihood_col):
+        """Helper to create heatmap data for a given risk type"""
+        df_work = df_temp.copy()
+        df_work['Impact_Cat'] = pd.cut(np.abs(df_work[impact_col]), bins=impact_bins, labels=impact_labels)
+        df_work['Likelihood_Cat'] = pd.cut(df_work[likelihood_col], bins=likelihood_bins, labels=likelihood_labels)
+
+        heatmap_data = []
+        for imp_cat in impact_labels:
+            row_data = []
+            for lik_cat in likelihood_labels:
+                mask = (df_work['Impact_Cat'] == imp_cat) & (df_work['Likelihood_Cat'] == lik_cat)
+                count = mask.sum()
+                total_ev = (df_work.loc[mask, impact_col] * df_work.loc[mask, likelihood_col]).sum()
+                risk_ids = df_work.loc[mask, 'Risk ID'].tolist()
+                row_data.append({'count': count, 'ev': total_ev, 'risk_ids': risk_ids})
+            heatmap_data.append(row_data)
+        return heatmap_data
+
+    # Calculate max count for consistent color scale
+    initial_data = create_heatmap_data(df, 'Initial risk_Value', 'Initial_Likelihood')
+    residual_data = create_heatmap_data(df, 'Residual risk_Value', 'Residual_Likelihood')
+
+    max_count = max(
+        max(cell['count'] for row in initial_data for cell in row),
+        max(cell['count'] for row in residual_data for cell in row)
+    )
+    if max_count == 0:
+        max_count = 1
+
+    for ax_idx, (ax, heatmap_data, title) in enumerate(zip(
+        axes,
+        [initial_data, residual_data],
+        ['Initial Risk Heatmap (Before Mitigation)', 'Residual Risk Heatmap (After Mitigation)']
+    )):
+        # Create base risk severity grid (background colors)
+        for i, imp_cat in enumerate(impact_labels):
+            for j, lik_cat in enumerate(likelihood_labels):
+                # Risk severity based on position (higher impact + higher likelihood = higher risk)
+                severity = (i + j) / 8  # Normalized 0-1
+                bg_color = plt.cm.RdYlGn_r(severity * 0.7 + 0.15)  # Scale to avoid extremes
+                rect = Rectangle((j, i), 1, 1, facecolor=bg_color, alpha=0.3, edgecolor='white', linewidth=2)
+                ax.add_patch(rect)
+
+        # Create count-based overlay
+        for i, imp_cat in enumerate(impact_labels):
+            for j, lik_cat in enumerate(likelihood_labels):
+                cell = heatmap_data[i][j]
+                count = cell['count']
+                ev = cell['ev'] / 1e6  # Convert to millions
+
+                if count > 0:
+                    # Add darker overlay based on count
+                    intensity = count / max_count
+                    overlay = Rectangle((j, i), 1, 1, facecolor='darkred', alpha=intensity * 0.5,
+                                        edgecolor='black', linewidth=1)
+                    ax.add_patch(overlay)
+
+                    # Add text
+                    text_color = 'white' if intensity > 0.3 else 'black'
+                    ax.text(j + 0.5, i + 0.6, f'{count}', ha='center', va='center',
+                           fontsize=14, fontweight='bold', color=text_color)
+                    ax.text(j + 0.5, i + 0.35, f'{ev:.1f}M', ha='center', va='center',
+                           fontsize=9, color=text_color)
+
+                    # Add risk IDs if not too many
+                    if len(cell['risk_ids']) <= 3 and len(cell['risk_ids']) > 0:
+                        ids_text = ','.join(map(str, cell['risk_ids']))
+                        ax.text(j + 0.5, i + 0.15, f'({ids_text})', ha='center', va='center',
+                               fontsize=7, color=text_color, alpha=0.8)
+                else:
+                    ax.text(j + 0.5, i + 0.5, '-', ha='center', va='center',
+                           fontsize=12, color='gray', alpha=0.5)
+
+        # Set axis properties
+        ax.set_xlim(0, 5)
+        ax.set_ylim(0, 5)
+        ax.set_xticks([0.5, 1.5, 2.5, 3.5, 4.5])
+        ax.set_xticklabels(likelihood_labels, fontsize=9)
+        ax.set_yticks([0.5, 1.5, 2.5, 3.5, 4.5])
+        ax.set_yticklabels(impact_labels, fontsize=9)
+        ax.set_xlabel('Likelihood →', fontsize=11, fontweight='bold')
+        ax.set_ylabel('← Impact', fontsize=11, fontweight='bold')
+        ax.set_title(title, fontsize=13, fontweight='bold', color='#1F4E78', pad=15)
+        ax.set_aspect('equal')
+
+        # Add grid
+        for i in range(6):
+            ax.axhline(y=i, color='white', linewidth=2)
+            ax.axvline(x=i, color='white', linewidth=2)
+
+    # Add legend
+    fig.text(0.5, 0.02, 'Cell shows: Risk Count / Expected Value (M CHF) / (Risk IDs)',
+             ha='center', fontsize=10, style='italic', color='#666666')
+
+    # Add overall title
+    fig.suptitle('Risk Heatmap Comparison: Before vs After Mitigation',
+                fontsize=14, fontweight='bold', color='#1F4E78', y=0.98)
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
 def create_matplotlib_risk_matrix(df, risk_type='initial'):
     """Create risk matrix using matplotlib for DOCX export"""
     import matplotlib
@@ -2431,10 +2557,10 @@ def add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confiden
     # Apply professional formatting
     format_table_executive(table, has_header=True, highlight_rows=[highlight_row] if highlight_row else [])
 
-    # Add risk matrix chart if provided
+    # Add risk heatmap chart if provided
     if risk_matrix_img:
-        doc.add_heading('Risk Matrix Visualization', 2)
-        doc.add_picture(risk_matrix_img, width=Inches(6))
+        doc.add_heading('Risk Heatmap Visualization', 2)
+        doc.add_picture(risk_matrix_img, width=Inches(6.5))
 
     doc.add_page_break()
 
@@ -2760,8 +2886,8 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
 
     # Generate and embed charts using matplotlib (reliable, no external dependencies)
     # Side-by-side comparison charts showing initial vs residual
-    with st.spinner("Generating risk matrix comparison chart..."):
-        risk_matrix_img = create_matplotlib_risk_matrix_combined(df)
+    with st.spinner("Generating risk heatmap comparison chart..."):
+        risk_matrix_img = create_matplotlib_heatmap_combined(df)
 
     add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img)
 
