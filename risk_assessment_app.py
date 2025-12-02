@@ -2098,7 +2098,7 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
     to_intro_run.font.color.rgb = RGBColor(89, 89, 89)
 
     # Create table for threat/opportunity metrics
-    to_table = doc.add_table(rows=8, cols=3)
+    to_table = doc.add_table(rows=7, cols=3)
 
     to_table.rows[0].cells[0].text = 'Category'
     to_table.rows[0].cells[1].text = 'Initial (M CHF)'
@@ -2114,7 +2114,6 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
         ('Net Exposure',
          f'{to_metrics["net_initial_exposure"]/1e6:.2f}',
          f'{to_metrics["net_residual_exposure"]/1e6:.2f}'),
-        ('', '', ''),
         ('Threat Reduction',
          f'{to_metrics["threat_reduction"]/1e6:.2f}',
          f'{(to_metrics["threat_reduction"]/to_metrics["threat_initial_ev"]*100) if to_metrics["threat_initial_ev"] > 0 else 0:.1f}%'),
@@ -2131,7 +2130,7 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
         to_table.rows[i].cells[1].text = initial
         to_table.rows[i].cells[2].text = residual
 
-    format_table_executive(to_table, has_header=True, highlight_rows=[3, 7])
+    format_table_executive(to_table, has_header=True, highlight_rows=[3, 6])
 
     doc.add_paragraph()  # Spacing
 
