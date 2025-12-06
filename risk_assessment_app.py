@@ -376,6 +376,27 @@ def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residua
     df_temp = df.copy()
     df_temp['EV'] = df_temp[impact_col] * df_temp[likelihood_col]
 
+    # Calculate mitigation cost per phase based on crystallization phase
+    phase_mitigation_costs = {phase: 0.0 for phase in phases.keys()}
+    if 'Cost of Measures_Value' in df.columns:
+        for _, row in df.iterrows():
+            mitigation_cost = row.get('Cost of Measures_Value', 0)
+            if pd.notna(mitigation_cost) and mitigation_cost > 0:
+                weights = row.get('Phase_Weights', {})
+                primary_phase = row.get('Crystallization Phase', 'ENG')
+
+                if weights:
+                    # Distribute mitigation cost according to phase weights
+                    for phase, weight in weights.items():
+                        if phase in phase_mitigation_costs:
+                            phase_mitigation_costs[phase] += mitigation_cost * weight
+                else:
+                    # Assign all mitigation cost to primary phase
+                    if primary_phase in phase_mitigation_costs:
+                        phase_mitigation_costs[primary_phase] += mitigation_cost
+
+    total_mitigation_cost = sum(phase_mitigation_costs.values())
+
     # For each simulation, allocate risk impacts to phases
     for sim_idx in range(n_simulations):
         occurred_mask = risk_occurrences[sim_idx].astype(bool)
@@ -416,7 +437,7 @@ def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residua
 
     phase_stats = {}
     total_ev = 0
-    sum_of_phase_allocations = 0  # Sum of individual phase percentiles (for distribution %)
+    sum_of_phase_allocations = 0  # Sum of individual phase percentiles (before pro-rating)
 
     for phase, phase_sims in phase_results.items():
         ev = np.mean(phase_sims)
@@ -434,47 +455,66 @@ def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residua
             'order': phases[phase]['order'],
             'color': phases[phase]['color'],
             'expected_value': ev,
-            'at_confidence': at_confidence,
+            'at_confidence_raw': at_confidence,  # Raw (non-prorated) value
             'p50': p50,
             'p80': p80,
             'p90': p90,
             'p95': p95,
             'std': np.std(phase_sims),
-            'simulation_results': phase_sims
+            'simulation_results': phase_sims,
+            'mitigation_cost': phase_mitigation_costs[phase]
         }
 
-    # Calculate percentages
+    # Pro-rate phase allocations so they sum to the correct total P80
+    # This ensures consistency: sum of phase allocations = total_at_confidence
+    prorate_factor = total_at_confidence / sum_of_phase_allocations if sum_of_phase_allocations > 0 else 0
+
     for phase in phase_stats:
+        # Pro-rated allocation that sums to total_at_confidence
+        phase_stats[phase]['at_confidence'] = phase_stats[phase]['at_confidence_raw'] * prorate_factor
+
+        # Calculate percentages based on pro-rated values (will sum to 100%)
+        if total_at_confidence > 0:
+            phase_stats[phase]['confidence_percentage'] = (phase_stats[phase]['at_confidence'] / total_at_confidence) * 100
+        else:
+            phase_stats[phase]['confidence_percentage'] = 0
+
         if total_ev > 0:
             phase_stats[phase]['ev_percentage'] = (phase_stats[phase]['expected_value'] / total_ev) * 100
         else:
             phase_stats[phase]['ev_percentage'] = 0
 
-        # Use sum_of_phase_allocations for distribution % so percentages sum to 100%
-        if sum_of_phase_allocations > 0:
-            phase_stats[phase]['confidence_percentage'] = (phase_stats[phase]['at_confidence'] / sum_of_phase_allocations) * 100
+        # Mitigation cost percentage
+        if total_mitigation_cost > 0:
+            phase_stats[phase]['mitigation_percentage'] = (phase_stats[phase]['mitigation_cost'] / total_mitigation_cost) * 100
         else:
-            phase_stats[phase]['confidence_percentage'] = 0
+            phase_stats[phase]['mitigation_percentage'] = 0
 
-    # Calculate cumulative allocation (for S-curve)
+    # Calculate cumulative allocation (for S-curve) using pro-rated values
     sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
     cumulative_ev = 0
     cumulative_confidence = 0
+    cumulative_mitigation = 0
 
     for phase, stats in sorted_phases:
         cumulative_ev += stats['expected_value']
-        cumulative_confidence += stats['at_confidence']
+        cumulative_confidence += stats['at_confidence']  # Now using pro-rated value
+        cumulative_mitigation += stats['mitigation_cost']
+
         phase_stats[phase]['cumulative_ev'] = cumulative_ev
         phase_stats[phase]['cumulative_at_confidence'] = cumulative_confidence
+        phase_stats[phase]['cumulative_mitigation'] = cumulative_mitigation
         phase_stats[phase]['cumulative_ev_pct'] = (cumulative_ev / total_ev * 100) if total_ev > 0 else 0
-        # Use sum_of_phase_allocations so cumulative reaches 100%
-        phase_stats[phase]['cumulative_confidence_pct'] = (cumulative_confidence / sum_of_phase_allocations * 100) if sum_of_phase_allocations > 0 else 0
+        phase_stats[phase]['cumulative_confidence_pct'] = (cumulative_confidence / total_at_confidence * 100) if total_at_confidence > 0 else 0
+        phase_stats[phase]['cumulative_mitigation_pct'] = (cumulative_mitigation / total_mitigation_cost * 100) if total_mitigation_cost > 0 else 0
 
     return {
         'phase_stats': phase_stats,
         'total_ev': total_ev,
         'total_at_confidence': total_at_confidence,  # Correct P80 of total (matches Confidence Level Comparison)
-        'sum_of_phase_allocations': sum_of_phase_allocations,  # Sum of individual phase P80s (for reference)
+        'sum_of_phase_allocations': sum_of_phase_allocations,  # Sum of raw phase P80s (for reference)
+        'prorate_factor': prorate_factor,  # Factor used to pro-rate allocations
+        'total_mitigation_cost': total_mitigation_cost,  # Total mitigation cost across all phases
         'confidence_level': confidence_level,
         'phases': phases
     }
@@ -5021,6 +5061,8 @@ def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
     confidence_level = phase_allocation_data['confidence_level']
     total_ev = phase_allocation_data['total_ev']
     total_at_confidence = phase_allocation_data['total_at_confidence']
+    total_mitigation = phase_allocation_data.get('total_mitigation_cost', mitigation_cost)
+    total_contingency = total_at_confidence + total_mitigation
 
     # Sort phases by order
     sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
@@ -5028,10 +5070,10 @@ def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
     # Time-Phased Allocation Table
     doc.add_heading('Phase Allocation Table', 2)
 
-    table = doc.add_table(rows=len(sorted_phases) + 2, cols=6)  # +2 for header and total
+    table = doc.add_table(rows=len(sorted_phases) + 2, cols=7)  # +2 for header and total, 7 columns
 
     # Headers
-    headers = ['Phase', 'Expected Value', f'{confidence_level} Allocation', '% of Total', 'Cumulative', 'Cumulative %']
+    headers = ['Phase', f'{confidence_level} Allocation', 'Mitigation Cost', 'Phase Total', '% of Total', 'Cumulative', 'Cumulative %']
     for i, header in enumerate(headers):
         cell = table.rows[0].cells[i]
         cell.text = header
@@ -5041,21 +5083,30 @@ def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
 
     # Data rows
     for row_idx, (code, stats) in enumerate(sorted_phases, 1):
+        phase_p80 = stats['at_confidence']
+        phase_mit = stats.get('mitigation_cost', 0)
+        phase_total = phase_p80 + phase_mit
+        cumulative_total = stats['cumulative_at_confidence'] + stats.get('cumulative_mitigation', 0)
+        pct_of_total = (phase_total / total_contingency * 100) if total_contingency > 0 else 0
+        cumulative_pct = (cumulative_total / total_contingency * 100) if total_contingency > 0 else 0
+
         table.rows[row_idx].cells[0].text = stats['name']
-        table.rows[row_idx].cells[1].text = f"{stats['expected_value']/1e6:.2f}M CHF"
-        table.rows[row_idx].cells[2].text = f"{stats['at_confidence']/1e6:.2f}M CHF"
-        table.rows[row_idx].cells[3].text = f"{stats['confidence_percentage']:.1f}%"
-        table.rows[row_idx].cells[4].text = f"{stats['cumulative_at_confidence']/1e6:.2f}M CHF"
-        table.rows[row_idx].cells[5].text = f"{stats['cumulative_confidence_pct']:.1f}%"
+        table.rows[row_idx].cells[1].text = f"{phase_p80/1e6:.2f}M CHF"
+        table.rows[row_idx].cells[2].text = f"{phase_mit/1e6:.2f}M CHF"
+        table.rows[row_idx].cells[3].text = f"{phase_total/1e6:.2f}M CHF"
+        table.rows[row_idx].cells[4].text = f"{pct_of_total:.1f}%"
+        table.rows[row_idx].cells[5].text = f"{cumulative_total/1e6:.2f}M CHF"
+        table.rows[row_idx].cells[6].text = f"{cumulative_pct:.1f}%"
 
     # Total row
     total_row = len(sorted_phases) + 1
     table.rows[total_row].cells[0].text = 'TOTAL'
-    table.rows[total_row].cells[1].text = f"{total_ev/1e6:.2f}M CHF"
-    table.rows[total_row].cells[2].text = f"{total_at_confidence/1e6:.2f}M CHF"
-    table.rows[total_row].cells[3].text = '100.0%'
-    table.rows[total_row].cells[4].text = f"{total_at_confidence/1e6:.2f}M CHF"
-    table.rows[total_row].cells[5].text = '100.0%'
+    table.rows[total_row].cells[1].text = f"{total_at_confidence/1e6:.2f}M CHF"
+    table.rows[total_row].cells[2].text = f"{total_mitigation/1e6:.2f}M CHF"
+    table.rows[total_row].cells[3].text = f"{total_contingency/1e6:.2f}M CHF"
+    table.rows[total_row].cells[4].text = '100.0%'
+    table.rows[total_row].cells[5].text = f"{total_contingency/1e6:.2f}M CHF"
+    table.rows[total_row].cells[6].text = '100.0%'
 
     # Make total row bold
     for cell in table.rows[total_row].cells:
@@ -5071,16 +5122,13 @@ def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
     # Summary metrics
     doc.add_heading('Key Metrics', 2)
 
-    # Calculate total contingency (residual + mitigation cost)
-    total_contingency = total_at_confidence + mitigation_cost
-
     metrics_para = doc.add_paragraph()
     metrics_para.add_run('Total Expected Value: ').bold = True
     metrics_para.add_run(f'{total_ev/1e6:.2f}M CHF\n')
     metrics_para.add_run(f'Residual Exposure ({confidence_level}): ').bold = True
     metrics_para.add_run(f'{total_at_confidence/1e6:.2f}M CHF\n')
     metrics_para.add_run('+ Mitigation Cost: ').bold = True
-    metrics_para.add_run(f'{mitigation_cost/1e6:.2f}M CHF\n')
+    metrics_para.add_run(f'{total_mitigation/1e6:.2f}M CHF\n')
     metrics_para.add_run(f'Total {confidence_level} Contingency: ').bold = True
     metrics_para.add_run(f'{total_contingency/1e6:.2f}M CHF\n')
 
@@ -5896,34 +5944,41 @@ def main():
                     phase_stats = phase_allocation['phase_stats']
                     sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
 
+                    # Get totals from phase_allocation (now includes mitigation cost breakdown)
+                    total_ev = phase_allocation['total_ev']
+                    residual_at_confidence = phase_allocation['total_at_confidence']
+                    total_mitigation = phase_allocation['total_mitigation_cost']
+                    total_contingency = residual_at_confidence + total_mitigation
+
+                    # Build table with P80 allocation, mitigation cost, and total per phase
                     phase_table_data = []
                     for code, stats in sorted_phases:
+                        phase_p80 = stats['at_confidence']
+                        phase_mitigation = stats['mitigation_cost']
+                        phase_total = phase_p80 + phase_mitigation
+
                         phase_table_data.append({
                             'Phase': stats['name'],
                             'Expected Value': f"{stats['expected_value']/1e6:.2f}M CHF",
-                            f'{confidence_level} Allocation': f"{stats['at_confidence']/1e6:.2f}M CHF",
-                            '% of Total': f"{stats['confidence_percentage']:.1f}%",
-                            'Cumulative': f"{stats['cumulative_at_confidence']/1e6:.2f}M CHF",
-                            'Cumulative %': f"{stats['cumulative_confidence_pct']:.1f}%"
+                            f'{confidence_level} Allocation': f"{phase_p80/1e6:.2f}M CHF",
+                            'Mitigation Cost': f"{phase_mitigation/1e6:.2f}M CHF",
+                            'Phase Total': f"{phase_total/1e6:.2f}M CHF",
+                            '% of Total': f"{(phase_total/total_contingency*100) if total_contingency > 0 else 0:.1f}%",
+                            'Cumulative': f"{(stats['cumulative_at_confidence'] + stats['cumulative_mitigation'])/1e6:.2f}M CHF",
+                            'Cumulative %': f"{((stats['cumulative_at_confidence'] + stats['cumulative_mitigation'])/total_contingency*100) if total_contingency > 0 else 0:.1f}%"
                         })
 
                     phase_summary_df = pd.DataFrame(phase_table_data)
                     st.dataframe(phase_summary_df, use_container_width=True, hide_index=True)
 
-                    # Summary metrics
-                    # Include mitigation cost to match Confidence Level Comparison's Total Contingency
-                    total_ev = phase_allocation['total_ev']
-                    residual_at_confidence = phase_allocation['total_at_confidence']
-                    mitigation_cost = current_df['Cost of Measures_Value'].sum()
-                    total_contingency = residual_at_confidence + mitigation_cost
-
+                    # Summary metrics showing breakdown
                     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                     with col_m1:
                         st.metric("Total Expected Value", f"{total_ev/1e6:.2f}M CHF")
                     with col_m2:
                         st.metric(f"Residual Exposure ({confidence_level})", f"{residual_at_confidence/1e6:.2f}M CHF")
                     with col_m3:
-                        st.metric("+ Mitigation Cost", f"{mitigation_cost/1e6:.2f}M CHF")
+                        st.metric("+ Mitigation Cost", f"{total_mitigation/1e6:.2f}M CHF")
                     with col_m4:
                         st.metric(f"Total {confidence_level} Contingency", f"{total_contingency/1e6:.2f}M CHF")
 
