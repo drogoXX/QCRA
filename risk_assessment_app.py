@@ -244,6 +244,251 @@ def calculate_confidence_comparison(results, mitigation_cost, selected_confidenc
         'mitigation_cost': mitigation_cost
     }
 
+# =============================================================================
+# TIME-PHASED CONTINGENCY PROFILE FUNCTIONS
+# =============================================================================
+
+# Default project phase definitions
+DEFAULT_PHASES = {
+    'ENG': {'name': 'Engineering', 'order': 1, 'color': '#3498db'},
+    'PROC': {'name': 'Procurement', 'order': 2, 'color': '#9b59b6'},
+    'FAB': {'name': 'Fabrication', 'order': 3, 'color': '#e67e22'},
+    'CONS': {'name': 'Construction', 'order': 4, 'color': '#27ae60'},
+    'COMM': {'name': 'Commissioning', 'order': 5, 'color': '#e74c3c'},
+    'WARR': {'name': 'Warranty', 'order': 6, 'color': '#95a5a6'}
+}
+
+def parse_phase_weights(weight_string):
+    """
+    Parse phase weight distribution string into dictionary.
+
+    Args:
+        weight_string: String like "ENG:0.5|PROC:0.3|FAB:0.2"
+
+    Returns:
+        Dictionary of phase -> weight
+    """
+    if pd.isna(weight_string) or not weight_string:
+        return {}
+
+    weights = {}
+    try:
+        pairs = str(weight_string).split('|')
+        for pair in pairs:
+            if ':' in pair:
+                phase, weight = pair.split(':')
+                weights[phase.strip()] = float(weight.strip())
+    except:
+        pass
+
+    return weights
+
+def load_enhanced_risk_data(file_path):
+    """
+    Load and process enhanced risk register data with phase information.
+
+    Args:
+        file_path: Path to enhanced risk register CSV
+
+    Returns:
+        DataFrame with processed risk and phase data
+    """
+    df = pd.read_csv(file_path, encoding='utf-8-sig')
+
+    # Clean column names
+    df.columns = df.columns.str.strip()
+
+    # Parse currency columns
+    currency_cols = ['Initial risk', 'Likely Initial Risk', 'Residual risk',
+                     'Likely Residual Risk', 'Cost of Measures']
+    for col in currency_cols:
+        if col in df.columns:
+            df[col + '_Value'] = df[col].apply(parse_currency)
+
+    # Parse likelihood columns
+    df['Initial_Likelihood'] = df['Likelihood'].apply(parse_percentage)
+
+    # Handle the second Likelihood column (for residual)
+    likelihood_cols = [col for col in df.columns if 'Likelihood' in col]
+    if len(likelihood_cols) > 1:
+        df['Residual_Likelihood'] = df[likelihood_cols[1]].apply(parse_percentage)
+
+    # Parse schedule impact
+    if 'Schedule Impact?' in df.columns:
+        df['Schedule_Impact'] = df['Schedule Impact?'].str.strip().str.lower().isin(['yes', 'yes '])
+
+    # Parse phase weights
+    if 'Phase Weight Distribution' in df.columns:
+        df['Phase_Weights'] = df['Phase Weight Distribution'].apply(parse_phase_weights)
+    else:
+        df['Phase_Weights'] = [{} for _ in range(len(df))]
+
+    # Default crystallization phase if not specified
+    if 'Crystallization Phase' not in df.columns:
+        df['Crystallization Phase'] = 'ENG'
+
+    return df
+
+def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residual',
+                               confidence_level='P80', phases=None):
+    """
+    Calculate contingency allocation across project phases.
+
+    Args:
+        df: DataFrame with enhanced risk data
+        results: Monte Carlo simulation results
+        risk_occurrences: Array of risk occurrence flags from simulation
+        risk_type: 'initial' or 'residual'
+        confidence_level: 'P50', 'P80', 'P90', or 'P95'
+        phases: Dictionary of phase definitions (uses DEFAULT_PHASES if None)
+
+    Returns:
+        Dictionary with phase allocation data
+    """
+    if phases is None:
+        phases = DEFAULT_PHASES
+
+    # Get impact column
+    if risk_type == 'initial':
+        impact_col = 'Initial risk_Value'
+        likelihood_col = 'Initial_Likelihood'
+    else:
+        impact_col = 'Residual risk_Value'
+        likelihood_col = 'Residual_Likelihood'
+
+    n_simulations = len(results)
+    phase_results = {phase: np.zeros(n_simulations) for phase in phases.keys()}
+
+    # Calculate expected value per risk
+    df_temp = df.copy()
+    df_temp['EV'] = df_temp[impact_col] * df_temp[likelihood_col]
+
+    # For each simulation, allocate risk impacts to phases
+    for sim_idx in range(n_simulations):
+        occurred_mask = risk_occurrences[sim_idx].astype(bool)
+
+        for risk_idx, (_, row) in enumerate(df.iterrows()):
+            if occurred_mask[risk_idx]:
+                impact = row[impact_col]
+                weights = row.get('Phase_Weights', {})
+                primary_phase = row.get('Crystallization Phase', 'ENG')
+
+                if weights:
+                    # Distribute impact according to weights
+                    for phase, weight in weights.items():
+                        if phase in phase_results:
+                            phase_results[phase][sim_idx] += impact * weight
+                else:
+                    # Assign all impact to primary phase
+                    if primary_phase in phase_results:
+                        phase_results[primary_phase][sim_idx] += impact
+
+    # Calculate statistics for each phase
+    percentile_map = {'P50': 50, 'P80': 80, 'P90': 90, 'P95': 95}
+    percentile_value = percentile_map.get(confidence_level, 80)
+
+    phase_stats = {}
+    total_ev = 0
+    total_at_confidence = 0
+
+    for phase, phase_sims in phase_results.items():
+        ev = np.mean(phase_sims)
+        at_confidence = np.percentile(phase_sims, percentile_value)
+        p50 = np.percentile(phase_sims, 50)
+        p80 = np.percentile(phase_sims, 80)
+        p90 = np.percentile(phase_sims, 90)
+        p95 = np.percentile(phase_sims, 95)
+
+        total_ev += ev
+        total_at_confidence += at_confidence
+
+        phase_stats[phase] = {
+            'name': phases[phase]['name'],
+            'order': phases[phase]['order'],
+            'color': phases[phase]['color'],
+            'expected_value': ev,
+            'at_confidence': at_confidence,
+            'p50': p50,
+            'p80': p80,
+            'p90': p90,
+            'p95': p95,
+            'std': np.std(phase_sims),
+            'simulation_results': phase_sims
+        }
+
+    # Calculate percentages
+    for phase in phase_stats:
+        if total_ev > 0:
+            phase_stats[phase]['ev_percentage'] = (phase_stats[phase]['expected_value'] / total_ev) * 100
+        else:
+            phase_stats[phase]['ev_percentage'] = 0
+
+        if total_at_confidence > 0:
+            phase_stats[phase]['confidence_percentage'] = (phase_stats[phase]['at_confidence'] / total_at_confidence) * 100
+        else:
+            phase_stats[phase]['confidence_percentage'] = 0
+
+    # Calculate cumulative allocation (for S-curve)
+    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+    cumulative_ev = 0
+    cumulative_confidence = 0
+
+    for phase, stats in sorted_phases:
+        cumulative_ev += stats['expected_value']
+        cumulative_confidence += stats['at_confidence']
+        phase_stats[phase]['cumulative_ev'] = cumulative_ev
+        phase_stats[phase]['cumulative_at_confidence'] = cumulative_confidence
+        phase_stats[phase]['cumulative_ev_pct'] = (cumulative_ev / total_ev * 100) if total_ev > 0 else 0
+        phase_stats[phase]['cumulative_confidence_pct'] = (cumulative_confidence / total_at_confidence * 100) if total_at_confidence > 0 else 0
+
+    return {
+        'phase_stats': phase_stats,
+        'total_ev': total_ev,
+        'total_at_confidence': total_at_confidence,
+        'confidence_level': confidence_level,
+        'phases': phases
+    }
+
+def get_early_warning_status(consumed_pct, phase_complete_pct, threshold_amber=0.1, threshold_red=0.2):
+    """
+    Determine early warning indicator status based on consumption vs completion.
+
+    Args:
+        consumed_pct: Percentage of contingency consumed (0-100)
+        phase_complete_pct: Percentage of phase completed (0-100)
+        threshold_amber: Amber threshold (deviation)
+        threshold_red: Red threshold (deviation)
+
+    Returns:
+        Dictionary with status ('Green', 'Amber', 'Red') and deviation
+    """
+    # Calculate expected consumption based on phase completion
+    expected_consumption = phase_complete_pct
+
+    # Calculate deviation (positive means over-consuming)
+    deviation = consumed_pct - expected_consumption
+
+    if deviation > threshold_red * 100:
+        status = 'Red'
+        message = f'Over-consuming by {deviation:.1f}% - Immediate attention required'
+    elif deviation > threshold_amber * 100:
+        status = 'Amber'
+        message = f'Over-consuming by {deviation:.1f}% - Monitor closely'
+    elif deviation < -threshold_amber * 100:
+        status = 'Green'
+        message = f'Under-consuming by {abs(deviation):.1f}% - On track'
+    else:
+        status = 'Green'
+        message = f'Consumption aligned with progress'
+
+    return {
+        'status': status,
+        'deviation': deviation,
+        'message': message,
+        'consumed_pct': consumed_pct,
+        'expected_pct': expected_consumption
+    }
+
 def create_risk_heatmap(df, risk_type='initial'):
     """Create risk heatmap showing concentration of risks in each cell"""
     if risk_type == 'initial':
@@ -969,6 +1214,396 @@ def create_incremental_cost_chart(confidence_data):
 
     return fig
 
+# =============================================================================
+# TIME-PHASED CONTINGENCY VISUALIZATION FUNCTIONS
+# =============================================================================
+
+def create_phase_allocation_bar_chart(phase_allocation_data, show_cumulative=False):
+    """
+    Create stacked/grouped bar chart showing contingency allocation by phase.
+
+    Args:
+        phase_allocation_data: Dictionary from calculate_phase_allocation()
+        show_cumulative: If True, show cumulative values instead of individual
+
+    Returns:
+        Plotly figure
+    """
+    phase_stats = phase_allocation_data['phase_stats']
+    confidence_level = phase_allocation_data['confidence_level']
+
+    # Sort phases by order
+    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+
+    phases = [stats['name'] for _, stats in sorted_phases]
+    phase_codes = [code for code, _ in sorted_phases]
+    colors = [stats['color'] for _, stats in sorted_phases]
+
+    if show_cumulative:
+        ev_values = [stats['cumulative_ev'] / 1e6 for _, stats in sorted_phases]
+        conf_values = [stats['cumulative_at_confidence'] / 1e6 for _, stats in sorted_phases]
+        title = f'Cumulative Contingency Allocation by Phase ({confidence_level})'
+    else:
+        ev_values = [stats['expected_value'] / 1e6 for _, stats in sorted_phases]
+        conf_values = [stats['at_confidence'] / 1e6 for _, stats in sorted_phases]
+        title = f'Contingency Allocation by Phase ({confidence_level})'
+
+    fig = go.Figure()
+
+    # Expected Value bars
+    fig.add_trace(go.Bar(
+        x=phases,
+        y=ev_values,
+        name='Expected Value',
+        marker_color='rgba(52, 152, 219, 0.7)',
+        text=[f'{v:.2f}M' for v in ev_values],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>Expected Value: %{y:.2f}M CHF<extra></extra>'
+    ))
+
+    # At Confidence bars
+    fig.add_trace(go.Bar(
+        x=phases,
+        y=conf_values,
+        name=f'{confidence_level} Value',
+        marker_color='rgba(231, 76, 60, 0.7)',
+        text=[f'{v:.2f}M' for v in conf_values],
+        textposition='outside',
+        hovertemplate=f'<b>%{{x}}</b><br>{confidence_level}: %{{y:.2f}}M CHF<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text=f'{title}<br><sub>Comparison of Expected Value vs {confidence_level} Contingency</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Project Phase',
+        yaxis_title='Contingency Amount (M CHF)',
+        barmode='group',
+        height=450,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        )
+    )
+
+    return fig
+
+def create_phase_scurve_chart(phase_allocation_data, show_burndown=True):
+    """
+    Create S-Curve showing cumulative contingency allocation/consumption.
+
+    Args:
+        phase_allocation_data: Dictionary from calculate_phase_allocation()
+        show_burndown: If True, show remaining contingency (burn-down)
+
+    Returns:
+        Plotly figure
+    """
+    phase_stats = phase_allocation_data['phase_stats']
+    confidence_level = phase_allocation_data['confidence_level']
+    total_at_confidence = phase_allocation_data['total_at_confidence']
+
+    # Sort phases by order
+    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+
+    # Build data points (including start point)
+    phases = ['Start'] + [stats['name'] for _, stats in sorted_phases]
+    phase_codes = [''] + [code for code, _ in sorted_phases]
+
+    # Cumulative allocation
+    cumulative_values = [0]
+    for _, stats in sorted_phases:
+        cumulative_values.append(stats['cumulative_at_confidence'])
+
+    # Remaining contingency (burn-down perspective)
+    remaining_values = [total_at_confidence - cv for cv in cumulative_values]
+
+    # Percentages
+    cumulative_pct = [(cv / total_at_confidence * 100) if total_at_confidence > 0 else 0 for cv in cumulative_values]
+    remaining_pct = [100 - cp for cp in cumulative_pct]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    if show_burndown:
+        # Burn-down line (remaining contingency)
+        fig.add_trace(
+            go.Scatter(
+                x=phases,
+                y=[rv / 1e6 for rv in remaining_values],
+                mode='lines+markers+text',
+                name='Remaining Contingency',
+                line=dict(color='#E74C3C', width=3),
+                marker=dict(size=10),
+                text=[f'{rp:.0f}%' for rp in remaining_pct],
+                textposition='top center',
+                hovertemplate='<b>%{x}</b><br>Remaining: %{y:.2f}M CHF (%{text})<extra></extra>'
+            ),
+            secondary_y=False
+        )
+    else:
+        # Cumulative allocation line
+        fig.add_trace(
+            go.Scatter(
+                x=phases,
+                y=[cv / 1e6 for cv in cumulative_values],
+                mode='lines+markers+text',
+                name='Cumulative Allocation',
+                line=dict(color='#3498DB', width=3),
+                marker=dict(size=10),
+                text=[f'{cp:.0f}%' for cp in cumulative_pct],
+                textposition='top center',
+                hovertemplate='<b>%{x}</b><br>Allocated: %{y:.2f}M CHF (%{text})<extra></extra>'
+            ),
+            secondary_y=False
+        )
+
+    # Add phase-specific allocation as bars
+    phase_allocations = [0] + [stats['at_confidence'] / 1e6 for _, stats in sorted_phases]
+    fig.add_trace(
+        go.Bar(
+            x=phases,
+            y=phase_allocations,
+            name='Phase Allocation',
+            marker_color='rgba(52, 152, 219, 0.3)',
+            hovertemplate='<b>%{x}</b><br>Phase Amount: %{y:.2f}M CHF<extra></extra>'
+        ),
+        secondary_y=False
+    )
+
+    title = 'Contingency Burn-Down Curve' if show_burndown else 'Cumulative Contingency S-Curve'
+
+    fig.update_layout(
+        title=dict(
+            text=f'{title} ({confidence_level})<br><sub>Shows contingency {"depletion" if show_burndown else "allocation"} across project phases</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Project Phase',
+        height=450,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        ),
+        hovermode='x unified'
+    )
+
+    fig.update_yaxes(title_text='Contingency Amount (M CHF)', secondary_y=False)
+
+    return fig
+
+def create_phase_waterfall_chart(phase_allocation_data):
+    """
+    Create waterfall chart showing phase-by-phase contribution to total contingency.
+
+    Args:
+        phase_allocation_data: Dictionary from calculate_phase_allocation()
+
+    Returns:
+        Plotly figure
+    """
+    phase_stats = phase_allocation_data['phase_stats']
+    confidence_level = phase_allocation_data['confidence_level']
+    total_at_confidence = phase_allocation_data['total_at_confidence']
+
+    # Sort phases by order
+    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+
+    # Prepare waterfall data
+    labels = [stats['name'] for _, stats in sorted_phases] + ['Total']
+    values = [stats['at_confidence'] / 1e6 for _, stats in sorted_phases]
+    values.append(total_at_confidence / 1e6)
+
+    measures = ['relative'] * len(sorted_phases) + ['total']
+    colors = [stats['color'] for _, stats in sorted_phases] + ['#2C3E50']
+
+    fig = go.Figure(go.Waterfall(
+        name='Phase Contribution',
+        orientation='v',
+        measure=measures,
+        x=labels,
+        y=values[:-1] + [0],  # Total is calculated automatically
+        textposition='outside',
+        text=[f'{v:.2f}M' for v in values[:-1]] + [f'{total_at_confidence/1e6:.2f}M'],
+        connector=dict(line=dict(color='rgb(63, 63, 63)')),
+        increasing=dict(marker=dict(color='rgba(52, 152, 219, 0.7)')),
+        totals=dict(marker=dict(color='#2C3E50')),
+        hovertemplate='<b>%{x}</b><br>Contribution: %{y:.2f}M CHF<extra></extra>'
+    ))
+
+    # Add percentage annotations
+    cumulative = 0
+    for i, (_, stats) in enumerate(sorted_phases):
+        pct = stats['confidence_percentage']
+        cumulative += stats['at_confidence']
+        fig.add_annotation(
+            x=i,
+            y=cumulative / 1e6,
+            text=f'{pct:.1f}%',
+            showarrow=False,
+            font=dict(size=9, color='#666'),
+            yshift=5
+        )
+
+    fig.update_layout(
+        title=dict(
+            text=f'Phase Contribution to Total Contingency ({confidence_level})<br><sub>Waterfall showing each phase\'s addition to contingency reserve</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Project Phase',
+        yaxis_title='Contingency Contribution (M CHF)',
+        height=450,
+        showlegend=False
+    )
+
+    return fig
+
+def create_early_warning_gauge(warning_status, phase_name):
+    """
+    Create gauge chart for early warning indicator.
+
+    Args:
+        warning_status: Dictionary from get_early_warning_status()
+        phase_name: Name of the phase
+
+    Returns:
+        Plotly figure
+    """
+    status = warning_status['status']
+    consumed_pct = warning_status['consumed_pct']
+    expected_pct = warning_status['expected_pct']
+    deviation = warning_status['deviation']
+
+    # Color based on status
+    status_colors = {
+        'Green': '#27AE60',
+        'Amber': '#F39C12',
+        'Red': '#E74C3C'
+    }
+    color = status_colors.get(status, '#95A5A6')
+
+    fig = go.Figure(go.Indicator(
+        mode='gauge+number+delta',
+        value=consumed_pct,
+        delta={'reference': expected_pct, 'relative': False, 'valueformat': '.1f'},
+        title={'text': f'{phase_name}<br><sub>Contingency Consumption</sub>'},
+        gauge={
+            'axis': {'range': [0, 100], 'tickwidth': 1},
+            'bar': {'color': color},
+            'bgcolor': 'white',
+            'borderwidth': 2,
+            'bordercolor': '#666',
+            'steps': [
+                {'range': [0, expected_pct * 0.9], 'color': '#E8F6E8'},
+                {'range': [expected_pct * 0.9, expected_pct * 1.1], 'color': '#FFF3CD'},
+                {'range': [expected_pct * 1.1, 100], 'color': '#F8D7DA'}
+            ],
+            'threshold': {
+                'line': {'color': '#2C3E50', 'width': 4},
+                'thickness': 0.75,
+                'value': expected_pct
+            }
+        },
+        number={'suffix': '%', 'valueformat': '.1f'}
+    ))
+
+    fig.update_layout(
+        height=250,
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
+
+    return fig
+
+def create_phase_risk_distribution_chart(df, phase_allocation_data):
+    """
+    Create chart showing number of risks per phase and their distribution.
+
+    Args:
+        df: DataFrame with risk data including phase information
+        phase_allocation_data: Dictionary from calculate_phase_allocation()
+
+    Returns:
+        Plotly figure
+    """
+    phase_stats = phase_allocation_data['phase_stats']
+    phases = phase_allocation_data['phases']
+
+    # Count risks per crystallization phase
+    if 'Crystallization Phase' in df.columns:
+        phase_counts = df['Crystallization Phase'].value_counts()
+    else:
+        phase_counts = pd.Series(dtype=int)
+
+    # Sort phases by order
+    sorted_phases = sorted(phases.items(), key=lambda x: x[1]['order'])
+
+    phase_names = []
+    risk_counts = []
+    colors = []
+    ev_values = []
+
+    for code, phase_info in sorted_phases:
+        phase_names.append(phase_info['name'])
+        risk_counts.append(phase_counts.get(code, 0))
+        colors.append(phase_info['color'])
+        ev_values.append(phase_stats.get(code, {}).get('expected_value', 0) / 1e6)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Risk count bars
+    fig.add_trace(
+        go.Bar(
+            x=phase_names,
+            y=risk_counts,
+            name='Number of Risks',
+            marker_color=colors,
+            text=risk_counts,
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>Risks: %{y}<extra></extra>'
+        ),
+        secondary_y=False
+    )
+
+    # Expected value line
+    fig.add_trace(
+        go.Scatter(
+            x=phase_names,
+            y=ev_values,
+            mode='lines+markers',
+            name='Expected Value (M CHF)',
+            line=dict(color='#E74C3C', width=2),
+            marker=dict(size=8),
+            hovertemplate='<b>%{x}</b><br>EV: %{y:.2f}M CHF<extra></extra>'
+        ),
+        secondary_y=True
+    )
+
+    fig.update_layout(
+        title=dict(
+            text='Risk Distribution by Project Phase<br><sub>Number of risks and their expected value per phase</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Project Phase',
+        height=400,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        )
+    )
+
+    fig.update_yaxes(title_text='Number of Risks', secondary_y=False)
+    fig.update_yaxes(title_text='Expected Value (M CHF)', secondary_y=True)
+
+    return fig
+
 def create_risk_matrix(df, risk_type='initial'):
     """Create interactive risk matrix"""
     if risk_type == 'initial':
@@ -979,7 +1614,7 @@ def create_risk_matrix(df, risk_type='initial'):
         impact_col = 'Residual risk_Value'
         likelihood_col = 'Residual_Likelihood'
         title = 'Residual Risk Matrix'
-    
+
     # Create a copy to avoid modifying original dataframe
     df_plot = df.copy()
     
@@ -2737,6 +3372,156 @@ def create_matplotlib_confidence_comparison(confidence_data, selected_confidence
     plt.close(fig)
     return buf
 
+def create_matplotlib_phase_allocation(phase_allocation_data):
+    """Create time-phased contingency allocation chart for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    phase_stats = phase_allocation_data['phase_stats']
+    confidence_level = phase_allocation_data['confidence_level']
+    total_at_confidence = phase_allocation_data['total_at_confidence']
+
+    # Sort phases by order
+    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+
+    phases = [stats['name'] for _, stats in sorted_phases]
+    phase_codes = [code for code, _ in sorted_phases]
+    colors = [stats['color'] for _, stats in sorted_phases]
+    ev_values = [stats['expected_value'] / 1e6 for _, stats in sorted_phases]
+    conf_values = [stats['at_confidence'] / 1e6 for _, stats in sorted_phases]
+    cumulative_values = [0] + [stats['cumulative_at_confidence'] / 1e6 for _, stats in sorted_phases]
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Left chart: Grouped bar chart
+    ax1 = axes[0]
+    x = np.arange(len(phases))
+    width = 0.35
+
+    bars1 = ax1.bar(x - width/2, ev_values, width, label='Expected Value', color='#3498DB', alpha=0.7, edgecolor='black')
+    bars2 = ax1.bar(x + width/2, conf_values, width, label=f'{confidence_level} Value', color='#E74C3C', alpha=0.7, edgecolor='black')
+
+    # Add value labels
+    for bar, val in zip(bars1, ev_values):
+        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                f'{val:.1f}M', ha='center', va='bottom', fontsize=8)
+    for bar, val in zip(bars2, conf_values):
+        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                f'{val:.1f}M', ha='center', va='bottom', fontsize=8)
+
+    ax1.set_xlabel('Project Phase', fontsize=11)
+    ax1.set_ylabel('Contingency Amount (M CHF)', fontsize=11)
+    ax1.set_title(f'Phase Contingency Allocation ({confidence_level})', fontsize=13, fontweight='bold', color='#1F4E78')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(phases, rotation=45, ha='right')
+    ax1.legend(loc='upper right')
+    ax1.grid(True, axis='y', alpha=0.3)
+
+    # Right chart: S-Curve / Burn-Down
+    ax2 = axes[1]
+
+    # Cumulative allocation line
+    phase_labels = ['Start'] + phases
+    cumulative_pct = [(cv / (total_at_confidence/1e6) * 100) if total_at_confidence > 0 else 0 for cv in cumulative_values]
+
+    ax2.plot(range(len(phase_labels)), cumulative_values, 'o-', color='#3498DB', linewidth=3, markersize=10, label='Cumulative Allocation')
+
+    # Fill under curve
+    ax2.fill_between(range(len(phase_labels)), cumulative_values, alpha=0.2, color='#3498DB')
+
+    # Burn-down line (remaining)
+    remaining_values = [total_at_confidence/1e6 - cv for cv in cumulative_values]
+    ax2.plot(range(len(phase_labels)), remaining_values, 'o--', color='#E74C3C', linewidth=2, markersize=8, label='Remaining Contingency')
+
+    # Add percentage labels
+    for i, (cv, cp) in enumerate(zip(cumulative_values, cumulative_pct)):
+        ax2.annotate(f'{cp:.0f}%', (i, cv), textcoords='offset points', xytext=(0, 10),
+                    ha='center', fontsize=9, fontweight='bold', color='#1F4E78')
+
+    ax2.set_xlabel('Project Phase', fontsize=11)
+    ax2.set_ylabel('Contingency Amount (M CHF)', fontsize=11)
+    ax2.set_title(f'Contingency S-Curve & Burn-Down ({confidence_level})', fontsize=13, fontweight='bold', color='#1F4E78')
+    ax2.set_xticks(range(len(phase_labels)))
+    ax2.set_xticklabels(phase_labels, rotation=45, ha='right')
+    ax2.legend(loc='upper right')
+    ax2.grid(True, alpha=0.3)
+
+    # Overall title
+    fig.suptitle('Time-Phased Contingency Profile: Phase Allocation Analysis',
+                fontsize=14, fontweight='bold', color='#1F4E78', y=1.02)
+    plt.tight_layout()
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+def create_matplotlib_phase_waterfall(phase_allocation_data):
+    """Create waterfall chart for phase contributions for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    phase_stats = phase_allocation_data['phase_stats']
+    confidence_level = phase_allocation_data['confidence_level']
+    total_at_confidence = phase_allocation_data['total_at_confidence']
+
+    # Sort phases by order
+    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+
+    phases = [stats['name'] for _, stats in sorted_phases]
+    colors = [stats['color'] for _, stats in sorted_phases]
+    values = [stats['at_confidence'] / 1e6 for _, stats in sorted_phases]
+    percentages = [stats['confidence_percentage'] for _, stats in sorted_phases]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Calculate waterfall positions
+    cumulative = 0
+    for i, (phase, val, color, pct) in enumerate(zip(phases, values, colors, percentages)):
+        # Draw bar
+        ax.bar(i, val, bottom=cumulative, color=color, edgecolor='black', linewidth=1)
+
+        # Add value label inside bar
+        ax.text(i, cumulative + val/2, f'{val:.1f}M\n({pct:.0f}%)',
+               ha='center', va='center', fontsize=9, fontweight='bold', color='white')
+
+        cumulative += val
+
+    # Add total bar
+    ax.bar(len(phases), total_at_confidence/1e6, color='#2C3E50', edgecolor='black', linewidth=2)
+    ax.text(len(phases), total_at_confidence/1e6/2, f'Total\n{total_at_confidence/1e6:.1f}M',
+           ha='center', va='center', fontsize=10, fontweight='bold', color='white')
+
+    # Add connecting lines
+    cumulative = 0
+    for i in range(len(phases)):
+        cumulative += values[i]
+        if i < len(phases) - 1:
+            ax.hlines(y=cumulative, xmin=i+0.4, xmax=i+0.6, color='gray', linestyle='-', linewidth=1)
+
+    ax.set_xlabel('Project Phase', fontsize=11)
+    ax.set_ylabel('Contingency Amount (M CHF)', fontsize=11)
+    ax.set_title(f'Waterfall: Phase Contributions to Total Contingency ({confidence_level})',
+                fontsize=13, fontweight='bold', color='#1F4E78')
+    ax.set_xticks(range(len(phases) + 1))
+    ax.set_xticklabels(phases + ['Total'], rotation=45, ha='right')
+    ax.grid(True, axis='y', alpha=0.3)
+
+    plt.tight_layout()
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
 def create_matplotlib_risk_matrix(df, risk_type='initial'):
     """Create risk matrix using matplotlib for DOCX export"""
     import matplotlib
@@ -4171,6 +4956,205 @@ def add_docx_confidence_comparison_section(doc, confidence_data, confidence_char
 
     doc.add_page_break()
 
+def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
+                                  phase_allocation_img=None, waterfall_img=None):
+    """
+    Add Time-Phased Contingency Profile section to DOCX report.
+
+    Args:
+        doc: Document object
+        phase_allocation_data: Dictionary from calculate_phase_allocation()
+        df_enhanced: Enhanced DataFrame with phase information
+        phase_allocation_img: BytesIO of phase allocation chart
+        waterfall_img: BytesIO of waterfall chart
+    """
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    heading = doc.add_heading('Time-Phased Contingency Profile', 1)
+    format_heading_style(heading)
+
+    # Introduction
+    intro = doc.add_paragraph()
+    intro.add_run(
+        'This section presents the distribution of contingency requirements across project phases, '
+        'supporting cash flow planning and identifying when contingency reserves are most likely to be consumed.'
+    )
+
+    doc.add_paragraph()
+
+    # Phase Statistics
+    phase_stats = phase_allocation_data['phase_stats']
+    confidence_level = phase_allocation_data['confidence_level']
+    total_ev = phase_allocation_data['total_ev']
+    total_at_confidence = phase_allocation_data['total_at_confidence']
+
+    # Sort phases by order
+    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+
+    # Time-Phased Allocation Table
+    doc.add_heading('Phase Allocation Table', 2)
+
+    table = doc.add_table(rows=len(sorted_phases) + 2, cols=6)  # +2 for header and total
+
+    # Headers
+    headers = ['Phase', 'Expected Value', f'{confidence_level} Allocation', '% of Total', 'Cumulative', 'Cumulative %']
+    for i, header in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        cell.text = header
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+
+    # Data rows
+    for row_idx, (code, stats) in enumerate(sorted_phases, 1):
+        table.rows[row_idx].cells[0].text = stats['name']
+        table.rows[row_idx].cells[1].text = f"{stats['expected_value']/1e6:.2f}M CHF"
+        table.rows[row_idx].cells[2].text = f"{stats['at_confidence']/1e6:.2f}M CHF"
+        table.rows[row_idx].cells[3].text = f"{stats['confidence_percentage']:.1f}%"
+        table.rows[row_idx].cells[4].text = f"{stats['cumulative_at_confidence']/1e6:.2f}M CHF"
+        table.rows[row_idx].cells[5].text = f"{stats['cumulative_confidence_pct']:.1f}%"
+
+    # Total row
+    total_row = len(sorted_phases) + 1
+    table.rows[total_row].cells[0].text = 'TOTAL'
+    table.rows[total_row].cells[1].text = f"{total_ev/1e6:.2f}M CHF"
+    table.rows[total_row].cells[2].text = f"{total_at_confidence/1e6:.2f}M CHF"
+    table.rows[total_row].cells[3].text = '100.0%'
+    table.rows[total_row].cells[4].text = f"{total_at_confidence/1e6:.2f}M CHF"
+    table.rows[total_row].cells[5].text = '100.0%'
+
+    # Make total row bold
+    for cell in table.rows[total_row].cells:
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+
+    # Apply table formatting
+    format_table_executive(table, has_header=True)
+
+    doc.add_paragraph()
+
+    # Summary metrics
+    doc.add_heading('Key Metrics', 2)
+
+    metrics_para = doc.add_paragraph()
+    metrics_para.add_run('Total Expected Value: ').bold = True
+    metrics_para.add_run(f'{total_ev/1e6:.2f}M CHF\n')
+    metrics_para.add_run(f'Total {confidence_level} Contingency: ').bold = True
+    metrics_para.add_run(f'{total_at_confidence/1e6:.2f}M CHF\n')
+
+    contingency_margin = (total_at_confidence - total_ev) / total_ev * 100 if total_ev > 0 else 0
+    metrics_para.add_run('Contingency Margin: ').bold = True
+    metrics_para.add_run(f'+{contingency_margin:.1f}%')
+
+    doc.add_paragraph()
+
+    # Add phase allocation chart
+    if phase_allocation_img:
+        doc.add_heading('Phase Allocation Visualization', 2)
+        doc.add_picture(phase_allocation_img, width=Inches(6.5))
+        doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        caption = doc.add_paragraph()
+        caption.add_run('Figure: Phase-by-phase contingency allocation and S-curve showing cumulative distribution')
+        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in caption.runs:
+            run.font.size = Pt(10)
+            run.font.italic = True
+
+    doc.add_paragraph()
+
+    # Add waterfall chart
+    if waterfall_img:
+        doc.add_heading('Phase Contribution Waterfall', 2)
+        doc.add_picture(waterfall_img, width=Inches(6.5))
+        doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        caption = doc.add_paragraph()
+        caption.add_run('Figure: Waterfall showing each phase\'s contribution to total contingency reserve')
+        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in caption.runs:
+            run.font.size = Pt(10)
+            run.font.italic = True
+
+    doc.add_paragraph()
+
+    # Risk distribution by phase
+    if df_enhanced is not None and 'Crystallization Phase' in df_enhanced.columns:
+        doc.add_heading('Risk Distribution by Phase', 2)
+
+        phase_counts = df_enhanced['Crystallization Phase'].value_counts()
+        phases_config = phase_allocation_data['phases']
+
+        dist_table = doc.add_table(rows=len(phases_config) + 1, cols=3)
+        dist_headers = ['Phase', 'Number of Risks', 'Primary Phase Risk Count']
+
+        for i, header in enumerate(dist_headers):
+            cell = dist_table.rows[0].cells[i]
+            cell.text = header
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.bold = True
+
+        for row_idx, (code, phase_info) in enumerate(sorted(phases_config.items(), key=lambda x: x[1]['order']), 1):
+            dist_table.rows[row_idx].cells[0].text = phase_info['name']
+            count = phase_counts.get(code, 0)
+            dist_table.rows[row_idx].cells[1].text = str(count)
+            dist_table.rows[row_idx].cells[2].text = f'{count / len(df_enhanced) * 100:.1f}%' if len(df_enhanced) > 0 else '0%'
+
+        format_table_executive(dist_table, has_header=True)
+
+    doc.add_paragraph()
+
+    # Key insight
+    peak_phase = max(sorted_phases, key=lambda x: x[1]['at_confidence'])
+
+    insight_para = doc.add_paragraph()
+    insight_para.add_run('Key Insight: ').bold = True
+    insight_para.add_run(
+        f'The {peak_phase[1]["name"]} phase has the highest contingency allocation at '
+        f'{peak_phase[1]["at_confidence"]/1e6:.2f}M CHF ({peak_phase[1]["confidence_percentage"]:.1f}% of total). '
+        f'Cash flow planning should ensure adequate reserves are available during this phase.'
+    )
+
+    doc.add_paragraph()
+
+    # Cash flow planning recommendation
+    doc.add_heading('Cash Flow Planning Recommendations', 2)
+
+    rec_para = doc.add_paragraph()
+    rec_para.add_run(
+        'Based on the time-phased allocation analysis, the following cash flow recommendations are provided:\n'
+    )
+
+    recommendations = []
+    cumulative = 0
+    for code, stats in sorted_phases:
+        cumulative += stats['at_confidence']
+        pct = stats['confidence_percentage']
+        if pct > 20:
+            recommendations.append(
+                f'{stats["name"]}: High allocation ({pct:.0f}%) - Ensure significant contingency reserves '
+                f'({stats["at_confidence"]/1e6:.1f}M CHF) are available at phase start.'
+            )
+        elif pct > 10:
+            recommendations.append(
+                f'{stats["name"]}: Moderate allocation ({pct:.0f}%) - Plan for {stats["at_confidence"]/1e6:.1f}M CHF '
+                f'contingency draw during this phase.'
+            )
+
+    if recommendations:
+        for rec in recommendations:
+            doc.add_paragraph(rec, style='List Bullet')
+    else:
+        doc.add_paragraph(
+            'Contingency is relatively evenly distributed across phases. Standard cash flow provisions should suffice.',
+            style='List Bullet'
+        )
+
+    doc.add_page_break()
+
 def add_docx_risk_register_appendix(doc, df):
     """Add full risk register as appendix"""
     from docx.shared import Pt
@@ -4337,6 +5321,45 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
         confidence_chart_img = create_matplotlib_confidence_comparison(confidence_comparison, confidence_level)
 
     add_docx_confidence_comparison_section(doc, confidence_comparison, confidence_chart_img, confidence_level)
+
+    # Time-Phased Contingency Profile section (if enhanced data available)
+    import os
+    enhanced_csv_path = os.path.join(os.path.dirname(__file__), 'risk_register_enhanced.csv')
+
+    if os.path.exists(enhanced_csv_path):
+        with st.spinner("Generating time-phased contingency profile..."):
+            try:
+                # Load enhanced data
+                df_enhanced = load_enhanced_risk_data(enhanced_csv_path)
+
+                # We need risk occurrences - run a quick Monte Carlo for this
+                # Use common random numbers for consistency
+                random_nums = np.random.random((n_simulations, len(df_enhanced)))
+                _, residual_occurrences = run_monte_carlo(
+                    df_enhanced, n_simulations, risk_type='residual', random_numbers=random_nums
+                )
+
+                # Calculate phase allocation
+                phase_allocation = calculate_phase_allocation(
+                    df_enhanced,
+                    residual_results,
+                    residual_occurrences,
+                    risk_type='residual',
+                    confidence_level=confidence_level
+                )
+
+                # Generate charts
+                phase_allocation_img = create_matplotlib_phase_allocation(phase_allocation)
+                waterfall_img = create_matplotlib_phase_waterfall(phase_allocation)
+
+                # Add section
+                add_docx_time_phased_section(
+                    doc, phase_allocation, df_enhanced,
+                    phase_allocation_img, waterfall_img
+                )
+            except Exception as e:
+                # If anything fails, just skip the section
+                st.warning(f"Could not generate time-phased section: {str(e)}")
 
     # Appendices
     add_docx_risk_register_appendix(doc, df)
@@ -4723,6 +5746,163 @@ def main():
             requires an additional {p95_contingency - p50_contingency:.1f}M CHF (+{premium:.1f}% premium).
             This represents the cost of increased confidence in covering risk exposure.
             """)
+
+            st.markdown("---")
+
+            # =================================================================
+            # TIME-PHASED CONTINGENCY PROFILE SECTION
+            # =================================================================
+            st.subheader("📅 Time-Phased Contingency Profile")
+            st.info("""
+            **Cash Flow Planning Support**: View contingency allocation across project phases to support
+            accurate cash flow forecasting and identify when contingency reserves are most likely to be consumed.
+            """)
+
+            # Check if enhanced risk register is available
+            import os
+            enhanced_csv_path = os.path.join(os.path.dirname(__file__), 'risk_register_enhanced.csv')
+
+            if os.path.exists(enhanced_csv_path):
+                # Load enhanced data
+                try:
+                    df_enhanced = load_enhanced_risk_data(enhanced_csv_path)
+
+                    # Calculate phase allocation using stored risk occurrences
+                    phase_allocation = calculate_phase_allocation(
+                        df_enhanced,
+                        residual_results,
+                        residual_occurrences,
+                        risk_type='residual',
+                        confidence_level=confidence_level
+                    )
+
+                    # Store in session state
+                    st.session_state['phase_allocation'] = phase_allocation
+                    st.session_state['df_enhanced'] = df_enhanced
+
+                    # Time-Phased Allocation Table
+                    st.markdown("#### Time-Phased Allocation Table")
+
+                    phase_stats = phase_allocation['phase_stats']
+                    sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1]['order'])
+
+                    phase_table_data = []
+                    for code, stats in sorted_phases:
+                        phase_table_data.append({
+                            'Phase': stats['name'],
+                            'Expected Value': f"{stats['expected_value']/1e6:.2f}M CHF",
+                            f'{confidence_level} Allocation': f"{stats['at_confidence']/1e6:.2f}M CHF",
+                            '% of Total': f"{stats['confidence_percentage']:.1f}%",
+                            'Cumulative': f"{stats['cumulative_at_confidence']/1e6:.2f}M CHF",
+                            'Cumulative %': f"{stats['cumulative_confidence_pct']:.1f}%"
+                        })
+
+                    phase_df = pd.DataFrame(phase_table_data)
+                    st.dataframe(phase_df, use_container_width=True, hide_index=True)
+
+                    # Summary metrics
+                    total_ev = phase_allocation['total_ev']
+                    total_conf = phase_allocation['total_at_confidence']
+
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    with col_m1:
+                        st.metric("Total Expected Value", f"{total_ev/1e6:.2f}M CHF")
+                    with col_m2:
+                        st.metric(f"Total {confidence_level} Contingency", f"{total_conf/1e6:.2f}M CHF")
+                    with col_m3:
+                        contingency_margin = (total_conf - total_ev) / total_ev * 100 if total_ev > 0 else 0
+                        st.metric("Contingency Margin", f"+{contingency_margin:.1f}%")
+
+                    # Visualizations
+                    st.markdown("#### Phase Allocation Visualizations")
+
+                    viz_option = st.radio(
+                        "Select View:",
+                        ["Phase Allocation Chart", "S-Curve / Burn-Down", "Waterfall Chart", "Risk Distribution"],
+                        horizontal=True,
+                        key="phase_viz_option"
+                    )
+
+                    if viz_option == "Phase Allocation Chart":
+                        show_cumulative = st.checkbox("Show Cumulative Values", value=False)
+                        allocation_chart = create_phase_allocation_bar_chart(phase_allocation, show_cumulative)
+                        st.plotly_chart(allocation_chart, use_container_width=True)
+
+                    elif viz_option == "S-Curve / Burn-Down":
+                        show_burndown = st.checkbox("Show Burn-Down (Remaining)", value=True)
+                        scurve_chart = create_phase_scurve_chart(phase_allocation, show_burndown)
+                        st.plotly_chart(scurve_chart, use_container_width=True)
+
+                    elif viz_option == "Waterfall Chart":
+                        waterfall_chart = create_phase_waterfall_chart(phase_allocation)
+                        st.plotly_chart(waterfall_chart, use_container_width=True)
+
+                    elif viz_option == "Risk Distribution":
+                        dist_chart = create_phase_risk_distribution_chart(df_enhanced, phase_allocation)
+                        st.plotly_chart(dist_chart, use_container_width=True)
+
+                    # Early Warning Indicators Section
+                    st.markdown("#### Early Warning Indicators")
+                    st.caption("Simulated consumption tracking - set phase completion % to see warning status")
+
+                    # Phase completion input (for demonstration)
+                    ew_cols = st.columns(len(sorted_phases))
+
+                    warning_data = []
+                    for idx, (code, stats) in enumerate(sorted_phases):
+                        with ew_cols[idx]:
+                            phase_complete = st.slider(
+                                f"{stats['name'][:4]} Complete %",
+                                0, 100, 50,
+                                key=f"ew_complete_{code}"
+                            )
+                            consumed_pct = st.slider(
+                                f"{stats['name'][:4]} Consumed %",
+                                0, 100, int(phase_complete * 0.9),
+                                key=f"ew_consumed_{code}"
+                            )
+
+                            warning = get_early_warning_status(consumed_pct, phase_complete)
+                            warning_data.append({
+                                'Phase': stats['name'],
+                                'Completion': f"{phase_complete}%",
+                                'Consumed': f"{consumed_pct}%",
+                                'Status': warning['status'],
+                                'Message': warning['message']
+                            })
+
+                            # Status indicator
+                            status_colors = {'Green': '🟢', 'Amber': '🟡', 'Red': '🔴'}
+                            st.markdown(f"**{status_colors[warning['status']]} {warning['status']}**")
+
+                    # Warning summary table
+                    with st.expander("View Early Warning Summary Table"):
+                        warning_df = pd.DataFrame(warning_data)
+                        st.dataframe(warning_df, use_container_width=True, hide_index=True)
+
+                    # Key insight for time-phased profile
+                    peak_phase = max(sorted_phases, key=lambda x: x[1]['at_confidence'])
+                    st.success(f"""
+                    **📅 Phase Allocation Insight**: The {peak_phase[1]['name']} phase has the highest contingency
+                    allocation at {peak_phase[1]['at_confidence']/1e6:.2f}M CHF ({peak_phase[1]['confidence_percentage']:.1f}% of total).
+                    Plan cash flow reserves accordingly for this period.
+                    """)
+
+                except Exception as e:
+                    st.error(f"Error loading enhanced risk data: {str(e)}")
+                    st.info("The Time-Phased Contingency Profile requires an enhanced risk register with phase data.")
+
+            else:
+                st.warning("""
+                **Enhanced Risk Register Not Found**
+
+                The Time-Phased Contingency Profile requires an enhanced risk register CSV file
+                (`risk_register_enhanced.csv`) with the following additional columns:
+                - `Crystallization Phase`: The primary phase when risk is likely to materialize (ENG, PROC, FAB, CONS, COMM, WARR)
+                - `Phase Weight Distribution`: Distribution across phases (e.g., "ENG:0.5|PROC:0.3|FAB:0.2")
+
+                Please create this file to enable time-phased analysis.
+                """)
 
         with tab2:
             st.header("Risk Visualization - Matrix, Heatmap, Bubble & 3D Charts")
