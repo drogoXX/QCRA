@@ -5340,9 +5340,15 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
 
     add_docx_confidence_comparison_section(doc, confidence_comparison, confidence_chart_img, confidence_level)
 
-    # Time-Phased Contingency Profile section (only if uploaded data has phase columns)
-    has_phase_data = ('Crystallization Phase' in phase_check_df.columns and
-                      'Phase Weight Distribution' in phase_check_df.columns)
+    # Time-Phased Contingency Profile section (only if uploaded data has phase columns WITH data)
+    has_phase_data = (
+        'Crystallization Phase' in phase_check_df.columns and
+        'Phase Weight Distribution' in phase_check_df.columns and
+        phase_check_df['Crystallization Phase'].notna().any() and
+        (phase_check_df['Crystallization Phase'].astype(str).str.strip() != '').any() and
+        phase_check_df['Phase Weight Distribution'].notna().any() and
+        (phase_check_df['Phase Weight Distribution'].astype(str).str.strip() != '').any()
+    )
 
     if has_phase_data:
         with st.spinner("Generating time-phased contingency profile..."):
@@ -5431,15 +5437,20 @@ def main():
             df.rename(columns={old_name: new_name}, inplace=True)
 
     # Check and display phase data availability
-    has_crystallization = 'Crystallization Phase' in df.columns
-    has_phase_weight = 'Phase Weight Distribution' in df.columns
+    # Columns must exist AND contain actual data (not empty)
+    has_crystallization = ('Crystallization Phase' in df.columns and
+                           df['Crystallization Phase'].notna().any() and
+                           (df['Crystallization Phase'].astype(str).str.strip() != '').any())
+    has_phase_weight = ('Phase Weight Distribution' in df.columns and
+                        df['Phase Weight Distribution'].notna().any() and
+                        (df['Phase Weight Distribution'].astype(str).str.strip() != '').any())
 
     if has_crystallization and has_phase_weight:
         st.sidebar.success("📅 Phase data detected - Time-Phased Profile enabled")
     else:
         st.sidebar.caption("📅 No phase data - Time-Phased Profile disabled")
         with st.sidebar.expander("Enable Time-Phased Profile"):
-            st.write("Add these columns to your CSV:")
+            st.write("Add these columns to your CSV with values:")
             st.code("crystallization_phase\nphase_weight_distribution")
             st.write("Example values:")
             st.code("ENG\nENG:0.5|PROC:0.3|FAB:0.2")
@@ -5802,11 +5813,17 @@ def main():
 
             # =================================================================
             # TIME-PHASED CONTINGENCY PROFILE SECTION
-            # Only displayed if uploaded risk register contains phase columns
+            # Only displayed if uploaded risk register contains phase columns WITH data
             # Uses current_df (from uploaded file) to check for phase columns
             # =================================================================
-            has_phase_data = ('Crystallization Phase' in current_df.columns and
-                              'Phase Weight Distribution' in current_df.columns)
+            has_phase_data = (
+                'Crystallization Phase' in current_df.columns and
+                'Phase Weight Distribution' in current_df.columns and
+                current_df['Crystallization Phase'].notna().any() and
+                (current_df['Crystallization Phase'].astype(str).str.strip() != '').any() and
+                current_df['Phase Weight Distribution'].notna().any() and
+                (current_df['Phase Weight Distribution'].astype(str).str.strip() != '').any()
+            )
 
             if has_phase_data:
                 st.markdown("---")
