@@ -2197,6 +2197,115 @@ def create_matplotlib_heatmap_combined(df):
     plt.close(fig)
     return buf
 
+def create_matplotlib_3d_comparison(df):
+    """Create side-by-side 3D risk landscape comparison for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure(figsize=(16, 7))
+
+    # Common calculations
+    max_impact = max(
+        np.abs(df['Initial risk_Value']).max(),
+        np.abs(df['Residual risk_Value']).max()
+    ) / 1e6 * 1.1
+
+    max_ev = max(
+        df['Initial_EV'].max(),
+        df['Residual_EV'].max()
+    ) / 1e6 * 1.1
+
+    min_ev = min(
+        df['Initial_EV'].min(),
+        df['Residual_EV'].min()
+    ) / 1e6 * 1.1
+
+    # Separate threats and opportunities
+    df_threats = df[df['Initial_EV'] > 0]
+    df_opportunities = df[df['Initial_EV'] < 0]
+
+    for idx, (risk_type, title) in enumerate([('initial', 'Initial Risk Landscape'),
+                                               ('residual', 'Residual Risk Landscape')]):
+        ax = fig.add_subplot(1, 2, idx + 1, projection='3d')
+
+        if risk_type == 'initial':
+            likelihood_col = 'Initial_Likelihood'
+            impact_col = 'Initial risk_Value'
+            ev_col = 'Initial_EV'
+        else:
+            likelihood_col = 'Residual_Likelihood'
+            impact_col = 'Residual risk_Value'
+            ev_col = 'Residual_EV'
+
+        # Get current data
+        df_t = df[df[ev_col] > 0]  # Threats
+        df_o = df[df[ev_col] < 0]  # Opportunities
+
+        # Plot threats (red)
+        if len(df_t) > 0:
+            x_t = df_t[likelihood_col] * 100
+            y_t = np.abs(df_t[impact_col]) / 1e6
+            z_t = df_t[ev_col] / 1e6
+            sizes_t = np.clip(np.abs(df_t[ev_col]) / 1e6 * 30 + 50, 50, 300)
+            ax.scatter(x_t, y_t, z_t, c='red', s=sizes_t, alpha=0.7,
+                      edgecolors='darkred', linewidth=0.5, label='Threats', depthshade=True)
+            # Add risk ID labels for top 5 threats
+            top_threats = df_t.nlargest(5, ev_col)
+            for _, row in top_threats.iterrows():
+                ax.text(row[likelihood_col] * 100, np.abs(row[impact_col]) / 1e6,
+                       row[ev_col] / 1e6, str(row['Risk ID']), fontsize=7, color='darkred')
+
+        # Plot opportunities (green)
+        if len(df_o) > 0:
+            x_o = df_o[likelihood_col] * 100
+            y_o = np.abs(df_o[impact_col]) / 1e6
+            z_o = df_o[ev_col] / 1e6
+            sizes_o = np.clip(np.abs(df_o[ev_col]) / 1e6 * 30 + 50, 50, 300)
+            ax.scatter(x_o, y_o, z_o, c='green', s=sizes_o, alpha=0.7,
+                      edgecolors='darkgreen', linewidth=0.5, label='Opportunities',
+                      marker='^', depthshade=True)
+
+        # Add zero plane
+        xx, yy = np.meshgrid(np.linspace(0, 100, 10), np.linspace(0, max_impact, 10))
+        zz = np.zeros_like(xx)
+        ax.plot_surface(xx, yy, zz, alpha=0.2, color='gray')
+
+        # Add 50% likelihood line
+        y_line = np.linspace(0, max_impact, 10)
+        z_line = np.linspace(min_ev, max_ev, 10)
+        ax.plot([50]*10, y_line, [0]*10, 'orange', linestyle='--', linewidth=2, alpha=0.7)
+
+        # Labels and formatting
+        ax.set_xlabel('Likelihood (%)', fontsize=9, labelpad=5)
+        ax.set_ylabel('Impact (M CHF)', fontsize=9, labelpad=5)
+        ax.set_zlabel('Expected Value (M CHF)', fontsize=9, labelpad=5)
+        ax.set_title(title, fontsize=12, fontweight='bold', color='#1F4E78', pad=10)
+
+        # Set consistent axis limits
+        ax.set_xlim(0, 100)
+        ax.set_ylim(0, max_impact)
+        ax.set_zlim(min_ev, max_ev)
+
+        # Set viewing angle
+        ax.view_init(elev=20, azim=45)
+
+        # Add legend
+        ax.legend(loc='upper left', fontsize=8)
+
+    # Overall title
+    fig.suptitle('3D Risk Landscape: Before vs After Mitigation\nBubble size = Expected Value magnitude | Gray plane = Zero EV threshold',
+                fontsize=13, fontweight='bold', color='#1F4E78', y=1.02)
+    plt.tight_layout()
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
 def create_matplotlib_risk_matrix(df, risk_type='initial'):
     """Create risk matrix using matplotlib for DOCX export"""
     import matplotlib
@@ -3212,6 +3321,257 @@ def add_docx_mitigation_section(doc, df_with_roi, roi_chart_img=None):
 
     doc.add_page_break()
 
+def add_docx_3d_visualization_section(doc, df, chart_3d_img=None):
+    """Add 3D Risk Landscape visualization section to DOCX report"""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Section heading
+    heading = doc.add_heading('3D Risk Landscape Visualization', 1)
+    for run in heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Introduction
+    intro = doc.add_paragraph()
+    intro_text = intro.add_run(
+        'The 3D Risk Landscape provides an immersive visualization of the risk portfolio, '
+        'showing how risks are distributed across three dimensions: Likelihood (X-axis), '
+        'Impact (Y-axis), and Expected Value (Z-axis). This view clearly separates threats '
+        '(above the zero plane) from opportunities (below the zero plane).'
+    )
+    intro_text.font.name = 'Calibri'
+    intro_text.font.size = Pt(11)
+
+    doc.add_paragraph()  # Spacing
+
+    # Key for reading the chart
+    key_heading = doc.add_heading('Reading the 3D Landscape', 2)
+    for run in key_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    key_items = [
+        ('Red spheres', 'Threats - risks with positive Expected Value (potential costs)'),
+        ('Green triangles', 'Opportunities - risks with negative Expected Value (potential benefits)'),
+        ('Gray plane', 'Zero EV threshold - separates threats from opportunities'),
+        ('Bubble size', 'Proportional to the magnitude of Expected Value'),
+        ('Orange dashed line', '50% likelihood threshold - risks to the right require attention')
+    ]
+
+    for symbol, description in key_items:
+        para = doc.add_paragraph(style='List Bullet')
+        para.add_run(f'{symbol}: ').bold = True
+        para.add_run(description)
+
+    doc.add_paragraph()  # Spacing
+
+    # Add chart image if provided
+    if chart_3d_img:
+        chart_heading = doc.add_heading('Risk Landscape Comparison', 2)
+        for run in chart_heading.runs:
+            run.font.name = 'Calibri'
+            run.font.color.rgb = RGBColor(31, 78, 120)
+
+        desc = doc.add_paragraph()
+        desc_run = desc.add_run(
+            'The following visualization compares the initial risk landscape (before mitigation) '
+            'with the residual risk landscape (after mitigation). Notice how risks move closer '
+            'to the zero plane and reduce in size as mitigation measures take effect.'
+        )
+        desc_run.font.name = 'Calibri'
+        desc_run.font.size = Pt(10)
+        desc_run.font.italic = True
+
+        doc.add_picture(chart_3d_img, width=Inches(6.5))
+
+    doc.add_paragraph()  # Spacing
+
+    # 3D Insights table
+    insights_heading = doc.add_heading('3D Landscape Insights', 2)
+    for run in insights_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Calculate metrics for insights
+    to_metrics = calculate_threat_opportunity_metrics(df)
+
+    # Count high-risk items
+    high_risk_initial = len(df[(df['Initial_EV'] > 1e6) & (df['Initial_Likelihood'] > 0.5)])
+    high_risk_residual = len(df[(df['Residual_EV'] > 1e6) & (df['Residual_Likelihood'] > 0.5)])
+
+    # Average threat height
+    avg_threat_initial = to_metrics['threat_initial_ev'] / to_metrics['threat_count'] if to_metrics['threat_count'] > 0 else 0
+    avg_threat_residual = to_metrics['threat_residual_ev'] / to_metrics['threat_count'] if to_metrics['threat_count'] > 0 else 0
+
+    # Create insights table
+    insights_table = doc.add_table(rows=5, cols=3)
+    insights_table.rows[0].cells[0].text = 'Metric'
+    insights_table.rows[0].cells[1].text = 'Initial'
+    insights_table.rows[0].cells[2].text = 'Residual'
+
+    insights_data = [
+        ('Threats (above zero plane)', str(to_metrics['threat_count']), str(len(df[df['Residual_EV'] > 0]))),
+        ('Opportunities (below zero plane)', str(to_metrics['opportunity_count']), str(len(df[df['Residual_EV'] < 0]))),
+        ('High-Risk Zone (>50% likelihood, >1M EV)', str(high_risk_initial), str(high_risk_residual)),
+        ('Average Threat Height (EV)', f'{avg_threat_initial/1e6:.2f}M CHF', f'{avg_threat_residual/1e6:.2f}M CHF'),
+    ]
+
+    for i, (metric, initial, residual) in enumerate(insights_data, 1):
+        insights_table.rows[i].cells[0].text = metric
+        insights_table.rows[i].cells[1].text = initial
+        insights_table.rows[i].cells[2].text = residual
+
+    format_table_executive(insights_table, has_header=True)
+
+    doc.add_page_break()
+
+def add_docx_narrative_section(doc, df, initial_stats, residual_stats, confidence_level, sensitivity_df=None):
+    """Add executive risk narrative section to DOCX report"""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Generate the narrative
+    narrative = generate_risk_narrative(df, initial_stats, residual_stats, confidence_level, sensitivity_df)
+
+    # Section heading
+    heading = doc.add_heading('Executive Risk Narrative', 1)
+    for run in heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Executive Summary subsection
+    summary_heading = doc.add_heading('Portfolio Overview', 2)
+    for run in summary_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    summary_para = doc.add_paragraph()
+    summary_text = summary_para.add_run(narrative['executive_summary'])
+    summary_text.font.name = 'Calibri'
+    summary_text.font.size = Pt(11)
+
+    doc.add_paragraph()  # Spacing
+
+    # Critical Findings subsection
+    findings_heading = doc.add_heading('Critical Findings', 2)
+    for run in findings_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Parse and add critical findings (clean markdown)
+    findings_text = narrative['critical_findings'].replace('**', '')
+    findings_lines = [line.strip() for line in findings_text.split('\n\n') if line.strip()]
+
+    for line in findings_lines:
+        if ':' in line:
+            parts = line.split(':', 1)
+            para = doc.add_paragraph()
+            para.add_run(parts[0] + ': ').bold = True
+            if len(parts) > 1:
+                para.add_run(parts[1].strip())
+        else:
+            para = doc.add_paragraph()
+            para.add_run(line)
+
+    doc.add_paragraph()  # Spacing
+
+    # Top Risks subsection
+    top_risks_heading = doc.add_heading('Top Risk Drivers', 2)
+    for run in top_risks_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Get top 5 risks for detailed listing
+    df_sorted = df.copy()
+    df_sorted['Abs_EV'] = np.abs(df_sorted['Initial_EV'])
+    top_risks = df_sorted.nlargest(5, 'Abs_EV')
+
+    for idx, (_, risk) in enumerate(top_risks.iterrows(), 1):
+        risk_type = "Threat" if risk['Initial_EV'] > 0 else "Opportunity"
+        risk_para = doc.add_paragraph(style='List Number')
+        risk_para.add_run(f'Risk {risk["Risk ID"]} ({risk_type}): ').bold = True
+        risk_para.add_run(
+            f'{risk["Risk Description"][:100]}{"..." if len(risk["Risk Description"]) > 100 else ""}\n'
+        )
+        detail_para = doc.add_paragraph()
+        detail_para.paragraph_format.left_indent = Pt(36)
+        detail_run = detail_para.add_run(
+            f'Expected Value: {risk["Initial_EV"]/1e6:.2f}M CHF | '
+            f'Likelihood: {risk["Initial_Likelihood"]*100:.0f}% | '
+            f'Impact: {risk["Initial risk_Value"]/1e6:.2f}M CHF'
+        )
+        detail_run.font.size = Pt(10)
+        detail_run.font.italic = True
+        detail_run.font.color.rgb = RGBColor(89, 89, 89)
+
+    doc.add_paragraph()  # Spacing
+
+    # Sensitivity Insights (if available)
+    if sensitivity_df is not None and len(sensitivity_df) > 0 and narrative['sensitivity_insights']:
+        sens_heading = doc.add_heading('Sensitivity Analysis Insights', 2)
+        for run in sens_heading.runs:
+            run.font.name = 'Calibri'
+            run.font.color.rgb = RGBColor(31, 78, 120)
+
+        sens_text = narrative['sensitivity_insights'].replace('**', '')
+        if ':' in sens_text:
+            parts = sens_text.split(':', 1)
+            sens_para = doc.add_paragraph()
+            sens_para.add_run(parts[0] + ': ').bold = True
+            if len(parts) > 1:
+                sens_para.add_run(parts[1].strip())
+        else:
+            sens_para = doc.add_paragraph()
+            sens_para.add_run(sens_text)
+
+        doc.add_paragraph()  # Spacing
+
+    # Mitigation Effectiveness Summary
+    mit_heading = doc.add_heading('Mitigation Effectiveness Summary', 2)
+    for run in mit_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Get threat/opportunity metrics
+    to_metrics = calculate_threat_opportunity_metrics(df)
+
+    # Create mitigation effectiveness table
+    mit_table = doc.add_table(rows=5, cols=4)
+    mit_table.rows[0].cells[0].text = 'Metric'
+    mit_table.rows[0].cells[1].text = 'Initial'
+    mit_table.rows[0].cells[2].text = 'Residual'
+    mit_table.rows[0].cells[3].text = 'Change'
+
+    mit_data = [
+        ('Threat Exposure',
+         f'{to_metrics["threat_initial_ev"]/1e6:.1f}M',
+         f'{to_metrics["threat_residual_ev"]/1e6:.1f}M',
+         f'-{to_metrics["threat_reduction"]/1e6:.1f}M'),
+        ('Opportunity Value',
+         f'{to_metrics["opportunity_initial_ev"]/1e6:.1f}M',
+         f'{to_metrics["opportunity_residual_ev"]/1e6:.1f}M',
+         f'{to_metrics["opportunity_change"]/1e6:+.1f}M'),
+        ('Net Exposure',
+         f'{to_metrics["net_initial_exposure"]/1e6:.1f}M',
+         f'{to_metrics["net_residual_exposure"]/1e6:.1f}M',
+         f'-{to_metrics["net_reduction"]/1e6:.1f}M'),
+        ('Risk Reduction',
+         '-',
+         '-',
+         f'{narrative["risk_reduction_pct"]:.1f}%'),
+    ]
+
+    for i, (metric, initial, residual, change) in enumerate(mit_data, 1):
+        mit_table.rows[i].cells[0].text = metric
+        mit_table.rows[i].cells[1].text = initial
+        mit_table.rows[i].cells[2].text = residual
+        mit_table.rows[i].cells[3].text = change
+
+    format_table_executive(mit_table, has_header=True, highlight_rows=[3, 4])
+
+    doc.add_page_break()
+
 def add_docx_risk_register_appendix(doc, df):
     """Add full risk register as appendix"""
     from docx.shared import Pt
@@ -3339,6 +3699,16 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
         risk_matrix_img = create_matplotlib_heatmap_combined(df)
 
     add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img)
+
+    # Add Executive Risk Narrative section
+    with st.spinner("Generating executive risk narrative..."):
+        add_docx_narrative_section(doc, df, initial_stats, residual_stats, confidence_level, sensitivity_df)
+
+    # Add 3D Risk Landscape visualization section
+    with st.spinner("Generating 3D risk landscape chart..."):
+        chart_3d_img = create_matplotlib_3d_comparison(df)
+
+    add_docx_3d_visualization_section(doc, df, chart_3d_img)
 
     # Monte Carlo section with side-by-side comparison charts
     with st.spinner("Generating Monte Carlo comparison charts..."):
