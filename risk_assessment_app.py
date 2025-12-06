@@ -3446,6 +3446,7 @@ def main():
         residual_stats = st.session_state['residual_stats']
         df = st.session_state['df']
         df_with_roi = st.session_state['df_with_roi']
+        sensitivity_df = st.session_state['sensitivity_df']
         confidence_level = st.session_state.get('confidence_level', 'P95')
         
         # Create tabs
