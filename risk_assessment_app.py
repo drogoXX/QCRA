@@ -5395,12 +5395,13 @@ def main():
     
     if uploaded_file is not None:
         df = load_risk_data(uploaded_file)
+        st.sidebar.success(f"📁 Loaded: {uploaded_file.name}")
     else:
         # Use default file from same directory as app
         import os
         script_dir = os.path.dirname(os.path.abspath(__file__))
         default_file = os.path.join(script_dir, 'risk_register.csv')
-        
+
         if os.path.exists(default_file):
             df = load_risk_data(default_file)
             st.sidebar.info("📁 Using risk_register.csv from application directory")
@@ -5409,6 +5410,20 @@ def main():
             st.error("### 📁 No Risk Register Found")
             st.write("Please upload your risk register CSV file using the sidebar, or place a file named `risk_register.csv` in the same directory as the application.")
             st.stop()
+
+    # Check and display phase data availability
+    has_crystallization = 'Crystallization Phase' in df.columns
+    has_phase_weight = 'Phase Weight Distribution' in df.columns
+
+    if has_crystallization and has_phase_weight:
+        st.sidebar.success("📅 Phase data detected - Time-Phased Profile enabled")
+    else:
+        st.sidebar.caption("📅 No phase data - Time-Phased Profile disabled")
+        with st.sidebar.expander("Enable Time-Phased Profile"):
+            st.write("Add these columns to your CSV:")
+            st.code("Crystallization Phase\nPhase Weight Distribution")
+            st.write("Example values:")
+            st.code("ENG\nENG:0.5|PROC:0.3|FAB:0.2")
     
     # Simulation parameters
     st.sidebar.subheader("Monte Carlo Parameters")
