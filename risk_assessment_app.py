@@ -5877,8 +5877,8 @@ def main():
                             'Cumulative %': f"{stats['cumulative_confidence_pct']:.1f}%"
                         })
 
-                    phase_df = pd.DataFrame(phase_table_data)
-                    st.dataframe(phase_df, use_container_width=True, hide_index=True)
+                    phase_summary_df = pd.DataFrame(phase_table_data)
+                    st.dataframe(phase_summary_df, use_container_width=True, hide_index=True)
 
                     # Summary metrics
                     total_ev = phase_allocation['total_ev']
