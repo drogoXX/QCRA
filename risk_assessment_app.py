@@ -143,6 +143,7 @@ def calculate_statistics(results):
         'std': np.std(results),
         'p50': np.percentile(results, 50),
         'p80': np.percentile(results, 80),
+        'p90': np.percentile(results, 90),
         'p95': np.percentile(results, 95),
         'min': np.min(results),
         'max': np.max(results)
@@ -153,7 +154,7 @@ def get_confidence_value(stats, confidence_level):
 
     Parameters:
     - stats: Dictionary with statistical measures from calculate_statistics()
-    - confidence_level: String like 'P50', 'P80', or 'P95'
+    - confidence_level: String like 'P50', 'P80', 'P90', or 'P95'
 
     Returns:
     - The corresponding percentile value
@@ -161,9 +162,87 @@ def get_confidence_value(stats, confidence_level):
     percentile_map = {
         'P50': 'p50',
         'P80': 'p80',
+        'P90': 'p90',
         'P95': 'p95'
     }
-    return stats[percentile_map[confidence_level]]
+    return stats[percentile_map.get(confidence_level, 'p80')]
+
+def calculate_confidence_comparison(results, mitigation_cost, selected_confidence='P80'):
+    """
+    Calculate confidence level comparison metrics for contingency planning.
+
+    Args:
+        results: Monte Carlo simulation results array
+        mitigation_cost: Total cost of mitigation measures
+        selected_confidence: Currently selected confidence level
+
+    Returns:
+        Dictionary with comparison tables and metrics
+    """
+    # Extract percentiles
+    percentiles = {
+        'P50': np.percentile(results, 50),
+        'P80': np.percentile(results, 80),
+        'P90': np.percentile(results, 90),
+        'P95': np.percentile(results, 95),
+        'Max': np.max(results)
+    }
+
+    # Calculate total contingency (residual exposure + mitigation cost)
+    total_contingency = {level: value + mitigation_cost for level, value in percentiles.items()}
+
+    # Calculate delta from P50
+    p50_value = total_contingency['P50']
+    delta_from_p50 = {level: value - p50_value for level, value in total_contingency.items()}
+
+    # Calculate premium vs P50 (percentage)
+    premium_vs_p50 = {}
+    for level, value in total_contingency.items():
+        if level == 'P50':
+            premium_vs_p50[level] = 0
+        else:
+            premium_vs_p50[level] = ((value - p50_value) / p50_value * 100) if p50_value > 0 else 0
+
+    # Confidence level comparison table data
+    comparison_table = {
+        'levels': ['P50', 'P80', 'P90', 'P95', 'Max'],
+        'residual_exposure': [percentiles[l] for l in ['P50', 'P80', 'P90', 'P95', 'Max']],
+        'mitigation_cost': [mitigation_cost] * 5,
+        'total_contingency': [total_contingency[l] for l in ['P50', 'P80', 'P90', 'P95', 'Max']],
+        'delta_from_p50': [delta_from_p50[l] for l in ['P50', 'P80', 'P90', 'P95', 'Max']],
+        'premium_vs_p50': [premium_vs_p50[l] for l in ['P50', 'P80', 'P90', 'P95', 'Max']]
+    }
+
+    # Incremental cost analysis
+    incremental_steps = [
+        ('P50 → P80', 'P50', 'P80', 30),
+        ('P80 → P90', 'P80', 'P90', 10),
+        ('P90 → P95', 'P90', 'P95', 5)
+    ]
+
+    incremental_analysis = []
+    for step_name, from_level, to_level, pct_increase in incremental_steps:
+        additional_cost = total_contingency[to_level] - total_contingency[from_level]
+        pct_change = ((total_contingency[to_level] - total_contingency[from_level]) /
+                     total_contingency[from_level] * 100) if total_contingency[from_level] > 0 else 0
+        cost_per_pct = additional_cost / pct_increase if pct_increase > 0 else 0
+
+        incremental_analysis.append({
+            'step': step_name,
+            'confidence_increase': f'{pct_increase}%',
+            'additional_cost': additional_cost,
+            'pct_increase': pct_change,
+            'cost_per_1pct': cost_per_pct
+        })
+
+    return {
+        'percentiles': percentiles,
+        'total_contingency': total_contingency,
+        'comparison_table': comparison_table,
+        'incremental_analysis': incremental_analysis,
+        'selected_confidence': selected_confidence,
+        'mitigation_cost': mitigation_cost
+    }
 
 def create_risk_heatmap(df, risk_type='initial'):
     """Create risk heatmap showing concentration of risks in each cell"""
@@ -623,6 +702,269 @@ def create_3d_risk_comparison(df):
             xanchor="center",
             x=0.5
         )
+    )
+
+    return fig
+
+def create_confidence_bar_chart(confidence_data, selected_confidence='P80'):
+    """
+    Create horizontal bar chart showing contingency at different confidence levels.
+
+    Args:
+        confidence_data: Dictionary from calculate_confidence_comparison()
+        selected_confidence: Currently selected confidence level to highlight
+    """
+    levels = ['P50', 'P80', 'P90', 'P95']
+    contingencies = [confidence_data['total_contingency'][l] / 1e6 for l in levels]
+
+    # Create colors - highlight selected level
+    colors = []
+    for level in levels:
+        if level == selected_confidence:
+            colors.append('#1F4E78')  # Dark blue for selected
+        elif level == 'P50':
+            colors.append('#2ECC71')  # Green for P50
+        elif level == 'P95':
+            colors.append('#E74C3C')  # Red for P95
+        else:
+            colors.append('#3498DB')  # Light blue for others
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        y=levels,
+        x=contingencies,
+        orientation='h',
+        marker=dict(
+            color=colors,
+            line=dict(color='black', width=1)
+        ),
+        text=[f'{v:.1f}M CHF' for v in contingencies],
+        textposition='outside',
+        hovertemplate='<b>%{y}</b><br>Total Contingency: %{x:.2f}M CHF<extra></extra>'
+    ))
+
+    # Add star marker for selected confidence
+    selected_idx = levels.index(selected_confidence) if selected_confidence in levels else 1
+    fig.add_annotation(
+        x=contingencies[selected_idx],
+        y=selected_confidence,
+        text='★ SELECTED',
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=2,
+        ax=50,
+        ay=0,
+        font=dict(size=12, color='#1F4E78', family='Arial Black')
+    )
+
+    fig.update_layout(
+        title=dict(
+            text='Total Contingency by Confidence Level<br><sub>Residual Exposure + Mitigation Cost</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Total Contingency (M CHF)',
+        yaxis_title='Confidence Level',
+        height=350,
+        margin=dict(l=80, r=120, t=80, b=50),
+        showlegend=False
+    )
+
+    return fig
+
+def create_confidence_cdf_chart(results, confidence_data, selected_confidence='P80'):
+    """
+    Create CDF chart with multiple confidence level markers.
+
+    Args:
+        results: Monte Carlo simulation results array
+        confidence_data: Dictionary from calculate_confidence_comparison()
+        selected_confidence: Currently selected confidence level to highlight
+    """
+    sorted_results = np.sort(results)
+    cdf = np.arange(1, len(sorted_results) + 1) / len(sorted_results) * 100
+
+    fig = go.Figure()
+
+    # Add CDF line
+    fig.add_trace(go.Scatter(
+        x=sorted_results / 1e6,
+        y=cdf,
+        mode='lines',
+        name='CDF',
+        line=dict(color='#3498DB', width=3),
+        hovertemplate='Value: %{x:.2f}M CHF<br>Percentile: %{y:.1f}%<extra></extra>'
+    ))
+
+    # Add percentile markers
+    percentile_configs = [
+        ('P50', 50, '#2ECC71', 'solid'),
+        ('P80', 80, '#F39C12', 'solid'),
+        ('P90', 90, '#E67E22', 'dash'),
+        ('P95', 95, '#E74C3C', 'solid')
+    ]
+
+    for level, pct, color, dash in percentile_configs:
+        value = confidence_data['percentiles'][level] / 1e6
+        line_width = 4 if level == selected_confidence else 2
+
+        # Vertical line
+        fig.add_vline(
+            x=value,
+            line=dict(color=color, width=line_width, dash=dash),
+            annotation_text=f'{level}: {value:.1f}M' + (' ★' if level == selected_confidence else ''),
+            annotation_position='top',
+            annotation_font=dict(size=10, color=color)
+        )
+
+        # Horizontal line to y-axis
+        fig.add_hline(
+            y=pct,
+            line=dict(color=color, width=1, dash='dot'),
+        )
+
+    fig.update_layout(
+        title=dict(
+            text='Cumulative Distribution Function with Confidence Levels<br><sub>Vertical lines show contingency at each percentile</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Risk Exposure (M CHF)',
+        yaxis_title='Cumulative Probability (%)',
+        height=400,
+        yaxis=dict(range=[0, 105]),
+        showlegend=False
+    )
+
+    return fig
+
+def create_cost_confidence_curve(confidence_data):
+    """
+    Create line chart showing cost-confidence relationship (diminishing returns).
+
+    Args:
+        confidence_data: Dictionary from calculate_confidence_comparison()
+    """
+    # Data points
+    levels = ['P50', 'P80', 'P90', 'P95']
+    percentiles = [50, 80, 90, 95]
+    contingencies = [confidence_data['total_contingency'][l] / 1e6 for l in levels]
+
+    fig = go.Figure()
+
+    # Main line
+    fig.add_trace(go.Scatter(
+        x=percentiles,
+        y=contingencies,
+        mode='lines+markers',
+        name='Total Contingency',
+        line=dict(color='#1F4E78', width=3),
+        marker=dict(size=12, color='#1F4E78', line=dict(width=2, color='white')),
+        hovertemplate='<b>P%{x}</b><br>Contingency: %{y:.2f}M CHF<extra></extra>'
+    ))
+
+    # Add incremental cost annotations
+    for i in range(1, len(levels)):
+        delta = contingencies[i] - contingencies[i-1]
+        mid_x = (percentiles[i] + percentiles[i-1]) / 2
+        mid_y = (contingencies[i] + contingencies[i-1]) / 2
+
+        fig.add_annotation(
+            x=mid_x,
+            y=mid_y + (contingencies[-1] - contingencies[0]) * 0.08,
+            text=f'+{delta:.1f}M',
+            showarrow=False,
+            font=dict(size=10, color='#E74C3C'),
+            bgcolor='rgba(255,255,255,0.8)'
+        )
+
+    # Add diminishing returns shading
+    fig.add_trace(go.Scatter(
+        x=percentiles + percentiles[::-1],
+        y=contingencies + [contingencies[0]] * len(contingencies),
+        fill='toself',
+        fillcolor='rgba(52, 152, 219, 0.1)',
+        line=dict(color='rgba(0,0,0,0)'),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+
+    # Add reference line for P50 baseline
+    fig.add_hline(
+        y=contingencies[0],
+        line=dict(color='#2ECC71', width=2, dash='dash'),
+        annotation_text=f'P50 Baseline: {contingencies[0]:.1f}M',
+        annotation_position='bottom right',
+        annotation_font=dict(size=10, color='#2ECC71')
+    )
+
+    fig.update_layout(
+        title=dict(
+            text='Cost-Confidence Trade-off Curve<br><sub>Shows diminishing returns as confidence increases</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Confidence Level (%)',
+        yaxis_title='Total Contingency (M CHF)',
+        xaxis=dict(
+            tickmode='array',
+            tickvals=percentiles,
+            ticktext=['P50\n(Median)', 'P80\n(Standard)', 'P90\n(Conservative)', 'P95\n(Highly\nConservative)']
+        ),
+        height=400,
+        showlegend=False
+    )
+
+    return fig
+
+def create_incremental_cost_chart(confidence_data):
+    """
+    Create bar chart showing incremental cost for each confidence step.
+
+    Args:
+        confidence_data: Dictionary from calculate_confidence_comparison()
+    """
+    incremental = confidence_data['incremental_analysis']
+
+    steps = [item['step'] for item in incremental]
+    costs = [item['additional_cost'] / 1e6 for item in incremental]
+    cost_per_pct = [item['cost_per_1pct'] / 1e6 for item in incremental]
+
+    fig = go.Figure()
+
+    # Additional cost bars
+    fig.add_trace(go.Bar(
+        x=steps,
+        y=costs,
+        name='Additional Cost',
+        marker=dict(
+            color=['#3498DB', '#F39C12', '#E74C3C'],
+            line=dict(color='black', width=1)
+        ),
+        text=[f'+{c:.1f}M' for c in costs],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>Additional Cost: %{y:.2f}M CHF<extra></extra>'
+    ))
+
+    # Add cost per % annotation
+    for i, (step, cpc) in enumerate(zip(steps, cost_per_pct)):
+        fig.add_annotation(
+            x=step,
+            y=costs[i] * 0.5,
+            text=f'{cpc:.2f}M/1%',
+            showarrow=False,
+            font=dict(size=10, color='white', family='Arial Black'),
+            bgcolor='rgba(0,0,0,0.5)'
+        )
+
+    fig.update_layout(
+        title=dict(
+            text='Incremental Cost per Confidence Step<br><sub>Cost increases accelerate at higher confidence levels</sub>',
+            font=dict(size=14, color='#1F4E78')
+        ),
+        xaxis_title='Confidence Step',
+        yaxis_title='Additional Cost (M CHF)',
+        height=350,
+        showlegend=False
     )
 
     return fig
@@ -2306,6 +2648,95 @@ def create_matplotlib_3d_comparison(df):
     plt.close(fig)
     return buf
 
+def create_matplotlib_confidence_comparison(confidence_data, selected_confidence='P80'):
+    """Create confidence level comparison charts for DOCX export"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import FancyBboxPatch
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Data preparation
+    levels = ['P50', 'P80', 'P90', 'P95']
+    percentiles = [50, 80, 90, 95]
+    contingencies = [confidence_data['total_contingency'][l] / 1e6 for l in levels]
+    premiums = [confidence_data['comparison_table']['premium_vs_p50'][i] for i in range(4)]
+
+    # Colors
+    colors = []
+    for level in levels:
+        if level == selected_confidence:
+            colors.append('#1F4E78')
+        elif level == 'P50':
+            colors.append('#2ECC71')
+        elif level == 'P95':
+            colors.append('#E74C3C')
+        else:
+            colors.append('#3498DB')
+
+    # Left chart: Bar chart
+    ax1 = axes[0]
+    bars = ax1.barh(levels, contingencies, color=colors, edgecolor='black', linewidth=1)
+
+    # Add value labels
+    for i, (bar, cont, prem) in enumerate(zip(bars, contingencies, premiums)):
+        width = bar.get_width()
+        label = f'{cont:.1f}M CHF'
+        if levels[i] == selected_confidence:
+            label += ' ★'
+        ax1.text(width + 0.5, bar.get_y() + bar.get_height()/2,
+                label, va='center', fontsize=10, fontweight='bold')
+        if prem > 0:
+            ax1.text(width - 1, bar.get_y() + bar.get_height()/2,
+                    f'+{prem:.0f}%', va='center', ha='right', fontsize=9,
+                    color='white', fontweight='bold')
+
+    ax1.set_xlabel('Total Contingency (M CHF)', fontsize=11)
+    ax1.set_ylabel('Confidence Level', fontsize=11)
+    ax1.set_title('Total Contingency by Confidence Level', fontsize=13, fontweight='bold', color='#1F4E78')
+    ax1.set_xlim(0, max(contingencies) * 1.25)
+
+    # Right chart: Cost-Confidence curve
+    ax2 = axes[1]
+    ax2.plot(percentiles, contingencies, 'o-', color='#1F4E78', linewidth=3, markersize=12)
+
+    # Fill area under curve
+    ax2.fill_between(percentiles, contingencies, contingencies[0], alpha=0.2, color='#3498DB')
+
+    # Add incremental cost annotations
+    for i in range(1, len(levels)):
+        delta = contingencies[i] - contingencies[i-1]
+        mid_x = (percentiles[i] + percentiles[i-1]) / 2
+        mid_y = (contingencies[i] + contingencies[i-1]) / 2
+        ax2.annotate(f'+{delta:.1f}M', (mid_x, mid_y),
+                    fontsize=9, color='#E74C3C', fontweight='bold',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    # Add P50 baseline
+    ax2.axhline(y=contingencies[0], color='#2ECC71', linestyle='--', linewidth=2, alpha=0.7)
+    ax2.text(52, contingencies[0] - 1, f'P50 Baseline: {contingencies[0]:.1f}M',
+            fontsize=9, color='#2ECC71')
+
+    ax2.set_xlabel('Confidence Level (%)', fontsize=11)
+    ax2.set_ylabel('Total Contingency (M CHF)', fontsize=11)
+    ax2.set_title('Cost-Confidence Trade-off Curve', fontsize=13, fontweight='bold', color='#1F4E78')
+    ax2.set_xticks(percentiles)
+    ax2.set_xticklabels(['P50\n(Median)', 'P80\n(Standard)', 'P90\n(Conservative)', 'P95\n(Highly Cons.)'])
+    ax2.grid(True, alpha=0.3)
+
+    # Overall title
+    fig.suptitle('Confidence Level Comparison: Cost-Confidence Trade-off Analysis',
+                fontsize=14, fontweight='bold', color='#1F4E78', y=1.02)
+    plt.tight_layout()
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
 def create_matplotlib_risk_matrix(df, risk_type='initial'):
     """Create risk matrix using matplotlib for DOCX export"""
     import matplotlib
@@ -3572,6 +4003,174 @@ def add_docx_narrative_section(doc, df, initial_stats, residual_stats, confidenc
 
     doc.add_page_break()
 
+def add_docx_confidence_comparison_section(doc, confidence_data, confidence_chart_img=None, selected_confidence='P80'):
+    """Add confidence level comparison section to DOCX report"""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Section heading
+    heading = doc.add_heading('Confidence Level Comparison', 1)
+    for run in heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Introduction
+    intro = doc.add_paragraph()
+    intro_text = intro.add_run(
+        'This section presents contingency requirements at multiple confidence levels (P50, P80, P90, P95), '
+        'enabling decision-makers to explicitly evaluate the cost-confidence trade-off. This supports informed '
+        'governance discussions about risk appetite and contingency adequacy.'
+    )
+    intro_text.font.name = 'Calibri'
+    intro_text.font.size = Pt(11)
+
+    doc.add_paragraph()  # Spacing
+
+    # Confidence Level Comparison Table
+    table_heading = doc.add_heading('Contingency Requirements by Confidence Level', 2)
+    for run in table_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Create comparison table
+    comp_table = confidence_data['comparison_table']
+    levels = comp_table['levels']
+
+    # Build column headers with star for selected level
+    headers = ['Metric']
+    for level in levels:
+        if level == selected_confidence:
+            headers.append(f'{level} ★')
+        else:
+            headers.append(level)
+
+    table = doc.add_table(rows=6, cols=6)
+
+    # Set headers
+    for i, header in enumerate(headers):
+        table.rows[0].cells[i].text = header
+
+    # Table data
+    table_data = [
+        ('Residual Exposure', [f"{v/1e6:.2f}M" for v in comp_table['residual_exposure']]),
+        ('+ Mitigation Cost', [f"{v/1e6:.2f}M" for v in comp_table['mitigation_cost']]),
+        ('Total Contingency', [f"{v/1e6:.2f}M" for v in comp_table['total_contingency']]),
+        ('Δ from P50', ['—'] + [f"+{v/1e6:.2f}M" for v in comp_table['delta_from_p50'][1:]]),
+        ('Premium vs P50', ['—'] + [f"+{v:.1f}%" for v in comp_table['premium_vs_p50'][1:]])
+    ]
+
+    for row_idx, (metric, values) in enumerate(table_data, 1):
+        table.rows[row_idx].cells[0].text = metric
+        for col_idx, value in enumerate(values):
+            table.rows[row_idx].cells[col_idx + 1].text = value
+
+    format_table_executive(table, has_header=True, highlight_rows=[3])
+
+    doc.add_paragraph()  # Spacing
+
+    # Incremental Cost Analysis Table
+    inc_heading = doc.add_heading('Incremental Cost Analysis', 2)
+    for run in inc_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    inc_intro = doc.add_paragraph()
+    inc_intro_text = inc_intro.add_run(
+        'The following table shows the additional cost required for each step up in confidence level, '
+        'demonstrating the diminishing returns of higher confidence levels.'
+    )
+    inc_intro_text.font.name = 'Calibri'
+    inc_intro_text.font.size = Pt(10)
+    inc_intro_text.font.italic = True
+
+    inc_data = confidence_data['incremental_analysis']
+    inc_table = doc.add_table(rows=4, cols=4)
+
+    # Headers
+    inc_headers = ['Confidence Step', 'Additional Cost', '% Increase', 'Cost per 1% Confidence']
+    for i, header in enumerate(inc_headers):
+        inc_table.rows[0].cells[i].text = header
+
+    # Data
+    for row_idx, item in enumerate(inc_data, 1):
+        inc_table.rows[row_idx].cells[0].text = item['step']
+        inc_table.rows[row_idx].cells[1].text = f"+{item['additional_cost']/1e6:.2f}M CHF"
+        inc_table.rows[row_idx].cells[2].text = f"+{item['pct_increase']:.1f}%"
+        inc_table.rows[row_idx].cells[3].text = f"{item['cost_per_1pct']/1e6:.2f}M / %"
+
+    format_table_executive(inc_table, has_header=True)
+
+    doc.add_paragraph()  # Spacing
+
+    # Add chart if provided
+    if confidence_chart_img:
+        chart_heading = doc.add_heading('Cost-Confidence Visualization', 2)
+        for run in chart_heading.runs:
+            run.font.name = 'Calibri'
+            run.font.color.rgb = RGBColor(31, 78, 120)
+
+        chart_desc = doc.add_paragraph()
+        chart_desc_text = chart_desc.add_run(
+            'The charts below illustrate the cost-confidence trade-off, showing how contingency requirements '
+            'increase at higher confidence levels. The curve demonstrates diminishing returns: each additional '
+            'percentage of confidence costs progressively more.'
+        )
+        chart_desc_text.font.name = 'Calibri'
+        chart_desc_text.font.size = Pt(10)
+        chart_desc_text.font.italic = True
+
+        doc.add_picture(confidence_chart_img, width=Inches(6.5))
+
+    doc.add_paragraph()  # Spacing
+
+    # Key Insights
+    insights_heading = doc.add_heading('Key Insights', 2)
+    for run in insights_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    p50_cont = confidence_data['total_contingency']['P50'] / 1e6
+    p95_cont = confidence_data['total_contingency']['P95'] / 1e6
+    premium_p95 = confidence_data['comparison_table']['premium_vs_p50'][3]
+
+    insights = [
+        f'Moving from P50 to P95 confidence requires an additional {p95_cont - p50_cont:.1f}M CHF (+{premium_p95:.1f}% premium).',
+        f'The selected confidence level ({selected_confidence}) provides a balance between cost and risk coverage.',
+        'Higher confidence levels exhibit diminishing returns—each additional percentage costs progressively more.',
+        'The incremental cost analysis helps quantify the "price of certainty" for governance decisions.'
+    ]
+
+    for insight in insights:
+        para = doc.add_paragraph(style='List Bullet')
+        para.add_run(insight)
+
+    # Recommendation based on selected level
+    doc.add_paragraph()
+    rec_para = doc.add_paragraph()
+    rec_para.add_run('Recommendation: ').bold = True
+    if selected_confidence == 'P50':
+        rec_para.add_run(
+            'P50 represents the median outcome and may be suitable for organizations with high risk tolerance. '
+            'Consider if additional contingency at P80 or higher is warranted for critical projects.'
+        )
+    elif selected_confidence == 'P80':
+        rec_para.add_run(
+            'P80 is a commonly used standard that provides reasonable confidence while managing costs. '
+            'This level is appropriate for most project contingency allocations.'
+        )
+    elif selected_confidence == 'P90':
+        rec_para.add_run(
+            'P90 represents a conservative approach with higher certainty. '
+            'This level is suitable for risk-sensitive projects or organizations with lower risk tolerance.'
+        )
+    else:  # P95
+        rec_para.add_run(
+            'P95 provides high confidence but at significant additional cost. '
+            'This level is recommended for critical infrastructure or highly risk-averse organizations.'
+        )
+
+    doc.add_page_break()
+
 def add_docx_risk_register_appendix(doc, df):
     """Add full risk register as appendix"""
     from docx.shared import Pt
@@ -3728,6 +4327,16 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
         roi_img = create_matplotlib_roi_chart(df_with_roi, top_n=20)
 
     add_docx_mitigation_section(doc, df_with_roi, roi_img)
+
+    # Confidence Level Comparison section
+    with st.spinner("Generating confidence level comparison..."):
+        total_mitigation_cost = df['Cost of Measures_Value'].sum()
+        confidence_comparison = calculate_confidence_comparison(
+            residual_results, total_mitigation_cost, confidence_level
+        )
+        confidence_chart_img = create_matplotlib_confidence_comparison(confidence_comparison, confidence_level)
+
+    add_docx_confidence_comparison_section(doc, confidence_comparison, confidence_chart_img, confidence_level)
 
     # Appendices
     add_docx_risk_register_appendix(doc, df)
@@ -4002,7 +4611,119 @@ def main():
             })
 
             st.dataframe(stats_df, use_container_width=True, hide_index=True)
-        
+
+            st.markdown("---")
+
+            # Confidence Level Comparison Section
+            st.subheader("📊 Confidence Level Comparison")
+            st.info("""
+            **Cost-Confidence Trade-off Analysis**: Compare contingency requirements at multiple confidence levels
+            (P50, P80, P90, P95) to support informed governance discussions about risk appetite and contingency adequacy.
+            """)
+
+            # Calculate confidence comparison
+            total_mitigation_cost = df['Cost of Measures_Value'].sum()
+            confidence_comparison = calculate_confidence_comparison(
+                residual_results, total_mitigation_cost, confidence_level
+            )
+
+            # Confidence Level Comparison Table
+            st.markdown("#### Confidence Level Comparison Table")
+
+            comp_table = confidence_comparison['comparison_table']
+            levels_display = []
+            for level in comp_table['levels']:
+                if level == confidence_level:
+                    levels_display.append(f"★ {level}")
+                else:
+                    levels_display.append(level)
+
+            comparison_df = pd.DataFrame({
+                'Metric': ['Residual Exposure', '+ Mitigation Cost', 'Total Contingency', 'Δ from P50', 'Premium vs P50'],
+                levels_display[0]: [
+                    f"{comp_table['residual_exposure'][0]/1e6:.2f}M",
+                    f"{comp_table['mitigation_cost'][0]/1e6:.2f}M",
+                    f"{comp_table['total_contingency'][0]/1e6:.2f}M",
+                    "—",
+                    "—"
+                ],
+                levels_display[1]: [
+                    f"{comp_table['residual_exposure'][1]/1e6:.2f}M",
+                    f"{comp_table['mitigation_cost'][1]/1e6:.2f}M",
+                    f"{comp_table['total_contingency'][1]/1e6:.2f}M",
+                    f"+{comp_table['delta_from_p50'][1]/1e6:.2f}M",
+                    f"+{comp_table['premium_vs_p50'][1]:.1f}%"
+                ],
+                levels_display[2]: [
+                    f"{comp_table['residual_exposure'][2]/1e6:.2f}M",
+                    f"{comp_table['mitigation_cost'][2]/1e6:.2f}M",
+                    f"{comp_table['total_contingency'][2]/1e6:.2f}M",
+                    f"+{comp_table['delta_from_p50'][2]/1e6:.2f}M",
+                    f"+{comp_table['premium_vs_p50'][2]:.1f}%"
+                ],
+                levels_display[3]: [
+                    f"{comp_table['residual_exposure'][3]/1e6:.2f}M",
+                    f"{comp_table['mitigation_cost'][3]/1e6:.2f}M",
+                    f"{comp_table['total_contingency'][3]/1e6:.2f}M",
+                    f"+{comp_table['delta_from_p50'][3]/1e6:.2f}M",
+                    f"+{comp_table['premium_vs_p50'][3]:.1f}%"
+                ],
+                levels_display[4]: [
+                    f"{comp_table['residual_exposure'][4]/1e6:.2f}M",
+                    f"{comp_table['mitigation_cost'][4]/1e6:.2f}M",
+                    f"{comp_table['total_contingency'][4]/1e6:.2f}M",
+                    f"+{comp_table['delta_from_p50'][4]/1e6:.2f}M",
+                    f"+{comp_table['premium_vs_p50'][4]:.1f}%"
+                ]
+            })
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+            # Incremental Cost Analysis Table
+            st.markdown("#### Incremental Cost Analysis")
+
+            inc_data = confidence_comparison['incremental_analysis']
+            incremental_df = pd.DataFrame({
+                'Confidence Step': [item['step'] for item in inc_data],
+                'Additional Cost': [f"+{item['additional_cost']/1e6:.2f}M CHF" for item in inc_data],
+                '% Increase': [f"+{item['pct_increase']:.1f}%" for item in inc_data],
+                'Cost per 1% Confidence': [f"{item['cost_per_1pct']/1e6:.2f}M / %" for item in inc_data]
+            })
+            st.dataframe(incremental_df, use_container_width=True, hide_index=True)
+
+            # Visualizations
+            st.markdown("#### Visualizations")
+
+            viz_col1, viz_col2 = st.columns(2)
+
+            with viz_col1:
+                # Confidence bar chart
+                bar_chart = create_confidence_bar_chart(confidence_comparison, confidence_level)
+                st.plotly_chart(bar_chart, use_container_width=True)
+
+                # CDF with percentile markers
+                cdf_chart = create_confidence_cdf_chart(residual_results, confidence_comparison, confidence_level)
+                st.plotly_chart(cdf_chart, use_container_width=True)
+
+            with viz_col2:
+                # Cost-confidence curve
+                curve_chart = create_cost_confidence_curve(confidence_comparison)
+                st.plotly_chart(curve_chart, use_container_width=True)
+
+                # Incremental cost chart
+                inc_chart = create_incremental_cost_chart(confidence_comparison)
+                st.plotly_chart(inc_chart, use_container_width=True)
+
+            # Key insight
+            p50_contingency = confidence_comparison['total_contingency']['P50'] / 1e6
+            p95_contingency = confidence_comparison['total_contingency']['P95'] / 1e6
+            premium = confidence_comparison['comparison_table']['premium_vs_p50'][3]
+
+            st.success(f"""
+            **💡 Key Insight**: Moving from P50 ({p50_contingency:.1f}M CHF) to P95 ({p95_contingency:.1f}M CHF)
+            requires an additional {p95_contingency - p50_contingency:.1f}M CHF (+{premium:.1f}% premium).
+            This represents the cost of increased confidence in covering risk exposure.
+            """)
+
         with tab2:
             st.header("Risk Visualization - Matrix, Heatmap, Bubble & 3D Charts")
 
