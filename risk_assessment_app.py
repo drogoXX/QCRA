@@ -5259,13 +5259,19 @@ def add_docx_methodology_appendix(doc, n_simulations, confidence_level):
         doc.add_paragraph(step, style='List Bullet')
 
 def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensitivity_df,
-                        initial_results, residual_results, n_simulations, confidence_level):
+                        initial_results, residual_results, n_simulations, confidence_level,
+                        current_df=None):
     """
     Generate comprehensive DOCX report with embedded charts
+
+    Args:
+        current_df: Optional DataFrame from currently uploaded file (for phase data check)
 
     Returns:
         BytesIO object containing the Word document
     """
+    # Use current_df for phase column checking if provided, otherwise use df
+    phase_check_df = current_df if current_df is not None else df
     from docx import Document
 
     doc = Document()
@@ -5326,26 +5332,29 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
     add_docx_confidence_comparison_section(doc, confidence_comparison, confidence_chart_img, confidence_level)
 
     # Time-Phased Contingency Profile section (only if uploaded data has phase columns)
-    has_phase_data = ('Crystallization Phase' in df.columns and
-                      'Phase Weight Distribution' in df.columns)
+    has_phase_data = ('Crystallization Phase' in phase_check_df.columns and
+                      'Phase Weight Distribution' in phase_check_df.columns)
 
     if has_phase_data:
         with st.spinner("Generating time-phased contingency profile..."):
             try:
+                # Use phase_check_df for phase analysis
+                phase_df = phase_check_df.copy()
+
                 # Parse phase weights if not already done
-                if 'Phase_Weights' not in df.columns:
-                    df['Phase_Weights'] = df['Phase Weight Distribution'].apply(parse_phase_weights)
+                if 'Phase_Weights' not in phase_df.columns:
+                    phase_df['Phase_Weights'] = phase_df['Phase Weight Distribution'].apply(parse_phase_weights)
 
                 # We need risk occurrences - run a quick Monte Carlo for this
                 # Use common random numbers for consistency
-                random_nums = np.random.random((n_simulations, len(df)))
+                random_nums = np.random.random((n_simulations, len(phase_df)))
                 _, residual_occurrences = run_monte_carlo(
-                    df, n_simulations, risk_type='residual', random_numbers=random_nums
+                    phase_df, n_simulations, risk_type='residual', random_numbers=random_nums
                 )
 
                 # Calculate phase allocation
                 phase_allocation = calculate_phase_allocation(
-                    df,
+                    phase_df,
                     residual_results,
                     residual_occurrences,
                     risk_type='residual',
@@ -5358,7 +5367,7 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
 
                 # Add section
                 add_docx_time_phased_section(
-                    doc, phase_allocation, df,
+                    doc, phase_allocation, phase_df,
                     phase_allocation_img, waterfall_img
                 )
             except Exception as e:
@@ -5443,9 +5452,12 @@ def main():
             st.session_state['sensitivity_df'] = sensitivity_df
             st.session_state['confidence_level'] = confidence_level
             st.session_state['simulation_run'] = True
-            
+
         st.sidebar.success("✅ Simulation completed!")
-    
+
+    # Store the current df (from uploaded file) before session state overwrite
+    current_df = df.copy()
+
     # Display results if simulation has been run
     if st.session_state.get('simulation_run', False):
         initial_results = st.session_state['initial_results']
@@ -5757,9 +5769,10 @@ def main():
             # =================================================================
             # TIME-PHASED CONTINGENCY PROFILE SECTION
             # Only displayed if uploaded risk register contains phase columns
+            # Uses current_df (from uploaded file) to check for phase columns
             # =================================================================
-            has_phase_data = ('Crystallization Phase' in df.columns and
-                              'Phase Weight Distribution' in df.columns)
+            has_phase_data = ('Crystallization Phase' in current_df.columns and
+                              'Phase Weight Distribution' in current_df.columns)
 
             if has_phase_data:
                 st.markdown("---")
@@ -5770,24 +5783,23 @@ def main():
                 """)
 
                 try:
-                    # Parse phase weights if not already done
-                    if 'Phase_Weights' not in df.columns:
-                        df['Phase_Weights'] = df['Phase Weight Distribution'].apply(parse_phase_weights)
+                    # Use current_df for phase analysis (has the phase columns from uploaded file)
+                    phase_df = current_df.copy()
 
-                    # Get or generate risk occurrences
-                    if residual_occurrences is None:
-                        # Generate new occurrences if not available from session
-                        n_sims = len(residual_results)
-                        random_nums = np.random.random((n_sims, len(df)))
-                        _, phase_occurrences = run_monte_carlo(
-                            df, n_sims, risk_type='residual', random_numbers=random_nums
-                        )
-                    else:
-                        phase_occurrences = residual_occurrences
+                    # Parse phase weights if not already done
+                    if 'Phase_Weights' not in phase_df.columns:
+                        phase_df['Phase_Weights'] = phase_df['Phase Weight Distribution'].apply(parse_phase_weights)
+
+                    # Always generate fresh occurrences for phase analysis using phase_df
+                    n_sims = len(residual_results)
+                    random_nums = np.random.random((n_sims, len(phase_df)))
+                    _, phase_occurrences = run_monte_carlo(
+                        phase_df, n_sims, risk_type='residual', random_numbers=random_nums
+                    )
 
                     # Calculate phase allocation using risk occurrences
                     phase_allocation = calculate_phase_allocation(
-                        df,
+                        phase_df,
                         residual_results,
                         phase_occurrences,
                         risk_type='residual',
@@ -5855,7 +5867,7 @@ def main():
                         st.plotly_chart(waterfall_chart, use_container_width=True)
 
                     elif viz_option == "Risk Distribution":
-                        dist_chart = create_phase_risk_distribution_chart(df, phase_allocation)
+                        dist_chart = create_phase_risk_distribution_chart(phase_df, phase_allocation)
                         st.plotly_chart(dist_chart, use_container_width=True)
 
                     # Early Warning Indicators Section
@@ -6796,7 +6808,8 @@ def main():
                                     initial_results=initial_results,
                                     residual_results=residual_results,
                                     n_simulations=n_simulations,
-                                    confidence_level=confidence_level
+                                    confidence_level=confidence_level,
+                                    current_df=current_df
                                 )
 
                                 st.success("✅ DOCX report generated successfully!")
