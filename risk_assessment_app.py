@@ -400,9 +400,23 @@ def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residua
     percentile_map = {'P50': 50, 'P80': 80, 'P90': 90, 'P95': 95}
     percentile_value = percentile_map.get(confidence_level, 80)
 
+    # First, calculate total simulation results by summing all phases per simulation
+    # This is needed for correct total percentile calculation
+    # (Percentiles are NOT additive: sum of P80s ≠ P80 of sum)
+    total_sims = np.zeros(n_simulations)
+    for phase_sims in phase_results.values():
+        total_sims += phase_sims
+
+    # Calculate correct total percentiles from combined simulation results
+    total_at_confidence = np.percentile(total_sims, percentile_value)
+    total_p50 = np.percentile(total_sims, 50)
+    total_p80 = np.percentile(total_sims, 80)
+    total_p90 = np.percentile(total_sims, 90)
+    total_p95 = np.percentile(total_sims, 95)
+
     phase_stats = {}
     total_ev = 0
-    total_at_confidence = 0
+    sum_of_phase_allocations = 0  # Sum of individual phase percentiles (for distribution %)
 
     for phase, phase_sims in phase_results.items():
         ev = np.mean(phase_sims)
@@ -413,7 +427,7 @@ def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residua
         p95 = np.percentile(phase_sims, 95)
 
         total_ev += ev
-        total_at_confidence += at_confidence
+        sum_of_phase_allocations += at_confidence
 
         phase_stats[phase] = {
             'name': phases[phase]['name'],
@@ -436,8 +450,9 @@ def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residua
         else:
             phase_stats[phase]['ev_percentage'] = 0
 
-        if total_at_confidence > 0:
-            phase_stats[phase]['confidence_percentage'] = (phase_stats[phase]['at_confidence'] / total_at_confidence) * 100
+        # Use sum_of_phase_allocations for distribution % so percentages sum to 100%
+        if sum_of_phase_allocations > 0:
+            phase_stats[phase]['confidence_percentage'] = (phase_stats[phase]['at_confidence'] / sum_of_phase_allocations) * 100
         else:
             phase_stats[phase]['confidence_percentage'] = 0
 
@@ -452,12 +467,14 @@ def calculate_phase_allocation(df, results, risk_occurrences, risk_type='residua
         phase_stats[phase]['cumulative_ev'] = cumulative_ev
         phase_stats[phase]['cumulative_at_confidence'] = cumulative_confidence
         phase_stats[phase]['cumulative_ev_pct'] = (cumulative_ev / total_ev * 100) if total_ev > 0 else 0
-        phase_stats[phase]['cumulative_confidence_pct'] = (cumulative_confidence / total_at_confidence * 100) if total_at_confidence > 0 else 0
+        # Use sum_of_phase_allocations so cumulative reaches 100%
+        phase_stats[phase]['cumulative_confidence_pct'] = (cumulative_confidence / sum_of_phase_allocations * 100) if sum_of_phase_allocations > 0 else 0
 
     return {
         'phase_stats': phase_stats,
         'total_ev': total_ev,
-        'total_at_confidence': total_at_confidence,
+        'total_at_confidence': total_at_confidence,  # Correct P80 of total (matches Confidence Level Comparison)
+        'sum_of_phase_allocations': sum_of_phase_allocations,  # Sum of individual phase P80s (for reference)
         'confidence_level': confidence_level,
         'phases': phases
     }
