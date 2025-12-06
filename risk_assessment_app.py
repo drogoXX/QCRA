@@ -4974,7 +4974,6 @@ def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
     from docx.oxml import OxmlElement
 
     heading = doc.add_heading('Time-Phased Contingency Profile', 1)
-    format_heading_style(heading)
 
     # Introduction
     intro = doc.add_paragraph()
@@ -5430,6 +5429,8 @@ def main():
             # Store in session state
             st.session_state['initial_results'] = initial_results
             st.session_state['residual_results'] = residual_results
+            st.session_state['initial_occurrences'] = initial_occurrences
+            st.session_state['residual_occurrences'] = residual_occurrences
             st.session_state['initial_stats'] = initial_stats
             st.session_state['residual_stats'] = residual_stats
             st.session_state['df'] = df
@@ -5450,6 +5451,7 @@ def main():
         df_with_roi = st.session_state['df_with_roi']
         sensitivity_df = st.session_state['sensitivity_df']
         confidence_level = st.session_state.get('confidence_level', 'P95')
+        residual_occurrences = st.session_state.get('residual_occurrences')
         
         # Create tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
@@ -5767,11 +5769,22 @@ def main():
                 try:
                     df_enhanced = load_enhanced_risk_data(enhanced_csv_path)
 
-                    # Calculate phase allocation using stored risk occurrences
+                    # Get or generate risk occurrences
+                    if residual_occurrences is None:
+                        # Generate new occurrences if not available from session
+                        n_sims = len(residual_results)
+                        random_nums = np.random.random((n_sims, len(df_enhanced)))
+                        _, phase_occurrences = run_monte_carlo(
+                            df_enhanced, n_sims, risk_type='residual', random_numbers=random_nums
+                        )
+                    else:
+                        phase_occurrences = residual_occurrences
+
+                    # Calculate phase allocation using risk occurrences
                     phase_allocation = calculate_phase_allocation(
                         df_enhanced,
                         residual_results,
-                        residual_occurrences,
+                        phase_occurrences,
                         risk_type='residual',
                         confidence_level=confidence_level
                     )
