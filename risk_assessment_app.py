@@ -4987,7 +4987,8 @@ def add_docx_confidence_comparison_section(doc, confidence_data, confidence_char
     doc.add_page_break()
 
 def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
-                                  phase_allocation_img=None, waterfall_img=None):
+                                  phase_allocation_img=None, waterfall_img=None,
+                                  mitigation_cost=0):
     """
     Add Time-Phased Contingency Profile section to DOCX report.
 
@@ -4997,6 +4998,7 @@ def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
         df_enhanced: Enhanced DataFrame with phase information
         phase_allocation_img: BytesIO of phase allocation chart
         waterfall_img: BytesIO of waterfall chart
+        mitigation_cost: Total mitigation cost to add to contingency
     """
     from docx.shared import Inches, Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -5069,13 +5071,20 @@ def add_docx_time_phased_section(doc, phase_allocation_data, df_enhanced=None,
     # Summary metrics
     doc.add_heading('Key Metrics', 2)
 
+    # Calculate total contingency (residual + mitigation cost)
+    total_contingency = total_at_confidence + mitigation_cost
+
     metrics_para = doc.add_paragraph()
     metrics_para.add_run('Total Expected Value: ').bold = True
     metrics_para.add_run(f'{total_ev/1e6:.2f}M CHF\n')
-    metrics_para.add_run(f'Total {confidence_level} Contingency: ').bold = True
+    metrics_para.add_run(f'Residual Exposure ({confidence_level}): ').bold = True
     metrics_para.add_run(f'{total_at_confidence/1e6:.2f}M CHF\n')
+    metrics_para.add_run('+ Mitigation Cost: ').bold = True
+    metrics_para.add_run(f'{mitigation_cost/1e6:.2f}M CHF\n')
+    metrics_para.add_run(f'Total {confidence_level} Contingency: ').bold = True
+    metrics_para.add_run(f'{total_contingency/1e6:.2f}M CHF\n')
 
-    contingency_margin = (total_at_confidence - total_ev) / total_ev * 100 if total_ev > 0 else 0
+    contingency_margin = (total_contingency - total_ev) / total_ev * 100 if total_ev > 0 else 0
     metrics_para.add_run('Contingency Margin: ').bold = True
     metrics_para.add_run(f'+{contingency_margin:.1f}%')
 
@@ -5397,10 +5406,14 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
                 phase_allocation_img = create_matplotlib_phase_allocation(phase_allocation)
                 waterfall_img = create_matplotlib_phase_waterfall(phase_allocation)
 
+                # Calculate mitigation cost for consistency with Confidence Level Comparison
+                phase_mitigation_cost = phase_df['Cost of Measures_Value'].sum()
+
                 # Add section
                 add_docx_time_phased_section(
                     doc, phase_allocation, phase_df,
-                    phase_allocation_img, waterfall_img
+                    phase_allocation_img, waterfall_img,
+                    mitigation_cost=phase_mitigation_cost
                 )
             except Exception as e:
                 # If anything fails, just skip the section
@@ -5898,17 +5911,25 @@ def main():
                     st.dataframe(phase_summary_df, use_container_width=True, hide_index=True)
 
                     # Summary metrics
+                    # Include mitigation cost to match Confidence Level Comparison's Total Contingency
                     total_ev = phase_allocation['total_ev']
-                    total_conf = phase_allocation['total_at_confidence']
+                    residual_at_confidence = phase_allocation['total_at_confidence']
+                    mitigation_cost = current_df['Cost of Measures_Value'].sum()
+                    total_contingency = residual_at_confidence + mitigation_cost
 
-                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                     with col_m1:
                         st.metric("Total Expected Value", f"{total_ev/1e6:.2f}M CHF")
                     with col_m2:
-                        st.metric(f"Total {confidence_level} Contingency", f"{total_conf/1e6:.2f}M CHF")
+                        st.metric(f"Residual Exposure ({confidence_level})", f"{residual_at_confidence/1e6:.2f}M CHF")
                     with col_m3:
-                        contingency_margin = (total_conf - total_ev) / total_ev * 100 if total_ev > 0 else 0
-                        st.metric("Contingency Margin", f"+{contingency_margin:.1f}%")
+                        st.metric("+ Mitigation Cost", f"{mitigation_cost/1e6:.2f}M CHF")
+                    with col_m4:
+                        st.metric(f"Total {confidence_level} Contingency", f"{total_contingency/1e6:.2f}M CHF")
+
+                    # Contingency margin based on total contingency
+                    contingency_margin = (total_contingency - total_ev) / total_ev * 100 if total_ev > 0 else 0
+                    st.caption(f"Contingency Margin: +{contingency_margin:.1f}% above expected value")
 
                     # Visualizations
                     st.markdown("#### Phase Allocation Visualizations")
