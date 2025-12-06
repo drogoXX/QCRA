@@ -70,28 +70,32 @@ def parse_percentage(value):
 def load_risk_data(file_path):
     """Load and process risk register data"""
     df = pd.read_csv(file_path, encoding='utf-8-sig')
-    
+
     # Clean column names
     df.columns = df.columns.str.strip()
-    
+
     # Parse currency columns
-    currency_cols = ['Initial risk', 'Likely Initial Risk', 'Residual risk', 
+    currency_cols = ['Initial risk', 'Likely Initial Risk', 'Residual risk',
                      'Likely Residual Risk', 'Cost of Measures']
     for col in currency_cols:
         if col in df.columns:
             df[col + '_Value'] = df[col].apply(parse_currency)
-    
+
     # Parse likelihood columns
     df['Initial_Likelihood'] = df['Likelihood'].apply(parse_percentage)
-    
+
     # Handle the second Likelihood column (for residual)
     likelihood_cols = [col for col in df.columns if 'Likelihood' in col]
     if len(likelihood_cols) > 1:
         df['Residual_Likelihood'] = df[likelihood_cols[1]].apply(parse_percentage)
-    
+
     # Parse schedule impact
     df['Schedule_Impact'] = df['Schedule Impact?'].str.strip().str.lower().isin(['yes', 'yes '])
-    
+
+    # Parse phase columns if present (for Time-Phased Contingency Profile)
+    if 'Phase Weight Distribution' in df.columns:
+        df['Phase_Weights'] = df['Phase Weight Distribution'].apply(parse_phase_weights)
+
     return df
 
 def run_monte_carlo(df, n_simulations=10000, risk_type='initial', random_numbers=None):
@@ -5321,26 +5325,27 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
 
     add_docx_confidence_comparison_section(doc, confidence_comparison, confidence_chart_img, confidence_level)
 
-    # Time-Phased Contingency Profile section (if enhanced data available)
-    import os
-    enhanced_csv_path = os.path.join(os.path.dirname(__file__), 'risk_register_enhanced.csv')
+    # Time-Phased Contingency Profile section (only if uploaded data has phase columns)
+    has_phase_data = ('Crystallization Phase' in df.columns and
+                      'Phase Weight Distribution' in df.columns)
 
-    if os.path.exists(enhanced_csv_path):
+    if has_phase_data:
         with st.spinner("Generating time-phased contingency profile..."):
             try:
-                # Load enhanced data
-                df_enhanced = load_enhanced_risk_data(enhanced_csv_path)
+                # Parse phase weights if not already done
+                if 'Phase_Weights' not in df.columns:
+                    df['Phase_Weights'] = df['Phase Weight Distribution'].apply(parse_phase_weights)
 
                 # We need risk occurrences - run a quick Monte Carlo for this
                 # Use common random numbers for consistency
-                random_nums = np.random.random((n_simulations, len(df_enhanced)))
+                random_nums = np.random.random((n_simulations, len(df)))
                 _, residual_occurrences = run_monte_carlo(
-                    df_enhanced, n_simulations, risk_type='residual', random_numbers=random_nums
+                    df, n_simulations, risk_type='residual', random_numbers=random_nums
                 )
 
                 # Calculate phase allocation
                 phase_allocation = calculate_phase_allocation(
-                    df_enhanced,
+                    df,
                     residual_results,
                     residual_occurrences,
                     risk_type='residual',
@@ -5353,7 +5358,7 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
 
                 # Add section
                 add_docx_time_phased_section(
-                    doc, phase_allocation, df_enhanced,
+                    doc, phase_allocation, df,
                     phase_allocation_img, waterfall_img
                 )
             except Exception as e:
@@ -5749,40 +5754,40 @@ def main():
             This represents the cost of increased confidence in covering risk exposure.
             """)
 
-            st.markdown("---")
-
             # =================================================================
             # TIME-PHASED CONTINGENCY PROFILE SECTION
+            # Only displayed if uploaded risk register contains phase columns
             # =================================================================
-            st.subheader("📅 Time-Phased Contingency Profile")
-            st.info("""
-            **Cash Flow Planning Support**: View contingency allocation across project phases to support
-            accurate cash flow forecasting and identify when contingency reserves are most likely to be consumed.
-            """)
+            has_phase_data = ('Crystallization Phase' in df.columns and
+                              'Phase Weight Distribution' in df.columns)
 
-            # Check if enhanced risk register is available
-            import os
-            enhanced_csv_path = os.path.join(os.path.dirname(__file__), 'risk_register_enhanced.csv')
+            if has_phase_data:
+                st.markdown("---")
+                st.subheader("📅 Time-Phased Contingency Profile")
+                st.info("""
+                **Cash Flow Planning Support**: View contingency allocation across project phases to support
+                accurate cash flow forecasting and identify when contingency reserves are most likely to be consumed.
+                """)
 
-            if os.path.exists(enhanced_csv_path):
-                # Load enhanced data
                 try:
-                    df_enhanced = load_enhanced_risk_data(enhanced_csv_path)
+                    # Parse phase weights if not already done
+                    if 'Phase_Weights' not in df.columns:
+                        df['Phase_Weights'] = df['Phase Weight Distribution'].apply(parse_phase_weights)
 
                     # Get or generate risk occurrences
                     if residual_occurrences is None:
                         # Generate new occurrences if not available from session
                         n_sims = len(residual_results)
-                        random_nums = np.random.random((n_sims, len(df_enhanced)))
+                        random_nums = np.random.random((n_sims, len(df)))
                         _, phase_occurrences = run_monte_carlo(
-                            df_enhanced, n_sims, risk_type='residual', random_numbers=random_nums
+                            df, n_sims, risk_type='residual', random_numbers=random_nums
                         )
                     else:
                         phase_occurrences = residual_occurrences
 
                     # Calculate phase allocation using risk occurrences
                     phase_allocation = calculate_phase_allocation(
-                        df_enhanced,
+                        df,
                         residual_results,
                         phase_occurrences,
                         risk_type='residual',
@@ -5791,7 +5796,6 @@ def main():
 
                     # Store in session state
                     st.session_state['phase_allocation'] = phase_allocation
-                    st.session_state['df_enhanced'] = df_enhanced
 
                     # Time-Phased Allocation Table
                     st.markdown("#### Time-Phased Allocation Table")
@@ -5851,7 +5855,7 @@ def main():
                         st.plotly_chart(waterfall_chart, use_container_width=True)
 
                     elif viz_option == "Risk Distribution":
-                        dist_chart = create_phase_risk_distribution_chart(df_enhanced, phase_allocation)
+                        dist_chart = create_phase_risk_distribution_chart(df, phase_allocation)
                         st.plotly_chart(dist_chart, use_container_width=True)
 
                     # Early Warning Indicators Section
@@ -5902,20 +5906,8 @@ def main():
                     """)
 
                 except Exception as e:
-                    st.error(f"Error loading enhanced risk data: {str(e)}")
-                    st.info("The Time-Phased Contingency Profile requires an enhanced risk register with phase data.")
-
-            else:
-                st.warning("""
-                **Enhanced Risk Register Not Found**
-
-                The Time-Phased Contingency Profile requires an enhanced risk register CSV file
-                (`risk_register_enhanced.csv`) with the following additional columns:
-                - `Crystallization Phase`: The primary phase when risk is likely to materialize (ENG, PROC, FAB, CONS, COMM, WARR)
-                - `Phase Weight Distribution`: Distribution across phases (e.g., "ENG:0.5|PROC:0.3|FAB:0.2")
-
-                Please create this file to enable time-phased analysis.
-                """)
+                    st.error(f"Error processing time-phased data: {str(e)}")
+                    st.info("Please ensure the risk register contains valid 'Crystallization Phase' and 'Phase Weight Distribution' columns.")
 
         with tab2:
             st.header("Risk Visualization - Matrix, Heatmap, Bubble & 3D Charts")
