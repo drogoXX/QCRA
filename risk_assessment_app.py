@@ -328,7 +328,303 @@ def create_risk_bubble_chart(df, risk_type='initial'):
                       showarrow=False, font=dict(size=10, color="orange"))
     
     fig.update_layout(height=700, showlegend=True)
-    
+
+    return fig
+
+def create_3d_risk_surface(df, risk_type='initial'):
+    """
+    Create 3D surface plot visualization of risk landscape.
+
+    Shows risks positioned in 3D space with:
+    - X-axis: Likelihood
+    - Y-axis: Impact
+    - Z-axis: Expected Value
+    - Color: Risk severity
+    """
+    if risk_type == 'initial':
+        impact_col = 'Initial risk_Value'
+        likelihood_col = 'Initial_Likelihood'
+        ev_col = 'Initial_EV'
+        title = '3D Risk Landscape - Initial Assessment'
+    else:
+        impact_col = 'Residual risk_Value'
+        likelihood_col = 'Residual_Likelihood'
+        ev_col = 'Residual_EV'
+        title = '3D Risk Landscape - Residual Assessment'
+
+    df_plot = df.copy()
+
+    # Separate threats and opportunities for different coloring
+    df_threats = df_plot[df_plot[ev_col] > 0]
+    df_opportunities = df_plot[df_plot[ev_col] < 0]
+
+    fig = go.Figure()
+
+    # Add threats as red markers
+    if len(df_threats) > 0:
+        fig.add_trace(go.Scatter3d(
+            x=df_threats[likelihood_col] * 100,
+            y=np.abs(df_threats[impact_col]) / 1e6,
+            z=df_threats[ev_col] / 1e6,
+            mode='markers+text',
+            marker=dict(
+                size=np.clip(np.abs(df_threats[ev_col]) / 1e6 * 3 + 5, 8, 30),
+                color=df_threats[ev_col] / 1e6,
+                colorscale='Reds',
+                opacity=0.8,
+                line=dict(width=1, color='darkred')
+            ),
+            text=df_threats['Risk ID'].astype(str),
+            textposition='top center',
+            textfont=dict(size=9, color='darkred'),
+            name='Threats',
+            hovertemplate=(
+                '<b>Risk %{text}</b><br>' +
+                'Likelihood: %{x:.1f}%<br>' +
+                'Impact: %{y:.2f}M CHF<br>' +
+                'Expected Value: %{z:.2f}M CHF<br>' +
+                '<extra></extra>'
+            )
+        ))
+
+    # Add opportunities as green markers
+    if len(df_opportunities) > 0:
+        fig.add_trace(go.Scatter3d(
+            x=df_opportunities[likelihood_col] * 100,
+            y=np.abs(df_opportunities[impact_col]) / 1e6,
+            z=df_opportunities[ev_col] / 1e6,
+            mode='markers+text',
+            marker=dict(
+                size=np.clip(np.abs(df_opportunities[ev_col]) / 1e6 * 3 + 5, 8, 30),
+                color='green',
+                opacity=0.8,
+                line=dict(width=1, color='darkgreen'),
+                symbol='diamond'
+            ),
+            text=df_opportunities['Risk ID'].astype(str),
+            textposition='top center',
+            textfont=dict(size=9, color='darkgreen'),
+            name='Opportunities',
+            hovertemplate=(
+                '<b>Risk %{text}</b><br>' +
+                'Likelihood: %{x:.1f}%<br>' +
+                'Impact: %{y:.2f}M CHF<br>' +
+                'Expected Value: %{z:.2f}M CHF<br>' +
+                '<extra></extra>'
+            )
+        ))
+
+    # Add a zero plane to show the threshold between threats and opportunities
+    max_likelihood = 100
+    max_impact = np.abs(df_plot[impact_col]).max() / 1e6 * 1.1
+
+    # Create mesh for zero plane
+    xx = np.linspace(0, max_likelihood, 10)
+    yy = np.linspace(0, max_impact, 10)
+    xx, yy = np.meshgrid(xx, yy)
+    zz = np.zeros_like(xx)
+
+    fig.add_trace(go.Surface(
+        x=xx, y=yy, z=zz,
+        opacity=0.3,
+        colorscale=[[0, 'lightgray'], [1, 'lightgray']],
+        showscale=False,
+        name='Zero Plane',
+        hoverinfo='skip'
+    ))
+
+    # Add risk zone indicators (vertical planes)
+    # High risk zone boundary
+    fig.add_trace(go.Scatter3d(
+        x=[50, 50, 50, 50, 50],
+        y=[0, max_impact, max_impact, 0, 0],
+        z=[df_plot[ev_col].min()/1e6, df_plot[ev_col].min()/1e6,
+           df_plot[ev_col].max()/1e6, df_plot[ev_col].max()/1e6, df_plot[ev_col].min()/1e6],
+        mode='lines',
+        line=dict(color='orange', width=3, dash='dash'),
+        name='50% Likelihood Threshold',
+        showlegend=True
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text=f'{title}<br><sub>Bubble size represents Expected Value magnitude</sub>',
+            font=dict(size=16, color='#1F4E78')
+        ),
+        scene=dict(
+            xaxis=dict(
+                title='Likelihood (%)',
+                range=[0, 100],
+                gridcolor='lightgray',
+                showbackground=True,
+                backgroundcolor='rgba(230,230,250,0.3)'
+            ),
+            yaxis=dict(
+                title='Impact (M CHF)',
+                gridcolor='lightgray',
+                showbackground=True,
+                backgroundcolor='rgba(230,250,230,0.3)'
+            ),
+            zaxis=dict(
+                title='Expected Value (M CHF)',
+                gridcolor='lightgray',
+                showbackground=True,
+                backgroundcolor='rgba(250,230,230,0.3)',
+                zeroline=True,
+                zerolinecolor='black',
+                zerolinewidth=2
+            ),
+            camera=dict(
+                eye=dict(x=1.5, y=1.5, z=1.2)
+            ),
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=1, z=0.8)
+        ),
+        height=700,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor='rgba(255,255,255,0.8)'
+        ),
+        margin=dict(l=0, r=0, t=80, b=0)
+    )
+
+    return fig
+
+def create_3d_risk_comparison(df):
+    """
+    Create side-by-side 3D comparison of initial vs residual risk landscape.
+    Shows risk movement through mitigation in 3D space.
+    """
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]],
+        subplot_titles=('Initial Risk Landscape', 'Residual Risk Landscape'),
+        horizontal_spacing=0.05
+    )
+
+    # Prepare data
+    df_plot = df.copy()
+
+    # Separate threats and opportunities
+    df_threats = df_plot[df_plot['Initial_EV'] > 0]
+    df_opportunities = df_plot[df_plot['Initial_EV'] < 0]
+
+    # Initial risks - Threats
+    if len(df_threats) > 0:
+        fig.add_trace(go.Scatter3d(
+            x=df_threats['Initial_Likelihood'] * 100,
+            y=np.abs(df_threats['Initial risk_Value']) / 1e6,
+            z=df_threats['Initial_EV'] / 1e6,
+            mode='markers',
+            marker=dict(
+                size=np.clip(np.abs(df_threats['Initial_EV']) / 1e6 * 2 + 4, 6, 20),
+                color='red',
+                opacity=0.7
+            ),
+            name='Initial Threats',
+            hovertemplate='<b>Risk %{text}</b><br>EV: %{z:.2f}M<extra></extra>',
+            text=df_threats['Risk ID'].astype(str)
+        ), row=1, col=1)
+
+    # Initial risks - Opportunities
+    if len(df_opportunities) > 0:
+        fig.add_trace(go.Scatter3d(
+            x=df_opportunities['Initial_Likelihood'] * 100,
+            y=np.abs(df_opportunities['Initial risk_Value']) / 1e6,
+            z=df_opportunities['Initial_EV'] / 1e6,
+            mode='markers',
+            marker=dict(
+                size=np.clip(np.abs(df_opportunities['Initial_EV']) / 1e6 * 2 + 4, 6, 20),
+                color='green',
+                opacity=0.7,
+                symbol='diamond'
+            ),
+            name='Initial Opportunities',
+            hovertemplate='<b>Risk %{text}</b><br>EV: %{z:.2f}M<extra></extra>',
+            text=df_opportunities['Risk ID'].astype(str)
+        ), row=1, col=1)
+
+    # Residual risks - Threats
+    df_threats_res = df_plot[df_plot['Residual_EV'] > 0]
+    df_opportunities_res = df_plot[df_plot['Residual_EV'] < 0]
+
+    if len(df_threats_res) > 0:
+        fig.add_trace(go.Scatter3d(
+            x=df_threats_res['Residual_Likelihood'] * 100,
+            y=np.abs(df_threats_res['Residual risk_Value']) / 1e6,
+            z=df_threats_res['Residual_EV'] / 1e6,
+            mode='markers',
+            marker=dict(
+                size=np.clip(np.abs(df_threats_res['Residual_EV']) / 1e6 * 2 + 4, 6, 20),
+                color='salmon',
+                opacity=0.7
+            ),
+            name='Residual Threats',
+            showlegend=True,
+            hovertemplate='<b>Risk %{text}</b><br>EV: %{z:.2f}M<extra></extra>',
+            text=df_threats_res['Risk ID'].astype(str)
+        ), row=1, col=2)
+
+    if len(df_opportunities_res) > 0:
+        fig.add_trace(go.Scatter3d(
+            x=df_opportunities_res['Residual_Likelihood'] * 100,
+            y=np.abs(df_opportunities_res['Residual risk_Value']) / 1e6,
+            z=df_opportunities_res['Residual_EV'] / 1e6,
+            mode='markers',
+            marker=dict(
+                size=np.clip(np.abs(df_opportunities_res['Residual_EV']) / 1e6 * 2 + 4, 6, 20),
+                color='lightgreen',
+                opacity=0.7,
+                symbol='diamond'
+            ),
+            name='Residual Opportunities',
+            showlegend=True,
+            hovertemplate='<b>Risk %{text}</b><br>EV: %{z:.2f}M<extra></extra>',
+            text=df_opportunities_res['Risk ID'].astype(str)
+        ), row=1, col=2)
+
+    # Calculate common axis ranges
+    max_likelihood = 100
+    max_impact = max(
+        np.abs(df_plot['Initial risk_Value']).max(),
+        np.abs(df_plot['Residual risk_Value']).max()
+    ) / 1e6 * 1.1
+    ev_range = [
+        min(df_plot['Initial_EV'].min(), df_plot['Residual_EV'].min()) / 1e6 * 1.1,
+        max(df_plot['Initial_EV'].max(), df_plot['Residual_EV'].max()) / 1e6 * 1.1
+    ]
+
+    # Update scene for both subplots
+    scene_config = dict(
+        xaxis=dict(title='Likelihood (%)', range=[0, max_likelihood]),
+        yaxis=dict(title='Impact (M CHF)', range=[0, max_impact]),
+        zaxis=dict(title='EV (M CHF)', range=ev_range),
+        camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))
+    )
+
+    fig.update_layout(
+        scene=scene_config,
+        scene2=scene_config,
+        title=dict(
+            text='3D Risk Landscape Comparison: Before vs After Mitigation',
+            font=dict(size=16, color='#1F4E78')
+        ),
+        height=600,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.15,
+            xanchor="center",
+            x=0.5
+        )
+    )
+
     return fig
 
 def create_risk_matrix(df, risk_type='initial'):
@@ -566,6 +862,130 @@ def calculate_threat_opportunity_metrics(df):
         'threat_reduction': threat_reduction,
         'opportunity_change': opportunity_change,
         'net_reduction': net_initial_exposure - net_residual_exposure
+    }
+
+def generate_risk_narrative(df, initial_stats, residual_stats, confidence_level, sensitivity_df=None):
+    """
+    Generate executive risk narrative using templates.
+
+    Args:
+        df: Risk register DataFrame
+        initial_stats: Statistics dictionary for initial risk
+        residual_stats: Statistics dictionary for residual risk
+        confidence_level: Selected confidence level (P50/P80/P95)
+        sensitivity_df: Optional sensitivity analysis DataFrame
+
+    Returns:
+        Dictionary with narrative sections
+    """
+    # Get threat/opportunity metrics
+    to_metrics = calculate_threat_opportunity_metrics(df)
+
+    # Calculate key metrics
+    total_risks = len(df)
+    threat_count = to_metrics['threat_count']
+    opportunity_count = to_metrics['opportunity_count']
+
+    # Get confidence level values
+    conf_key = confidence_level.lower()
+    initial_conf_value = initial_stats.get(conf_key, initial_stats.get('p80', 0))
+    residual_conf_value = residual_stats.get(conf_key, residual_stats.get('p80', 0))
+
+    # Calculate risk reduction
+    if initial_conf_value > 0:
+        risk_reduction_pct = ((initial_conf_value - residual_conf_value) / initial_conf_value) * 100
+    else:
+        risk_reduction_pct = 0
+
+    # Identify top risks (by absolute EV)
+    df_sorted = df.copy()
+    df_sorted['Abs_EV'] = np.abs(df_sorted['Initial_EV'])
+    top_risks = df_sorted.nlargest(5, 'Abs_EV')
+
+    # Identify high-priority risks (high likelihood AND high impact)
+    high_priority = df[(df['Initial_Likelihood'] >= 0.5) & (np.abs(df['Initial risk_Value']) >= 5000000)]
+
+    # Build executive summary
+    executive_summary = f"""The risk portfolio comprises {total_risks} identified risks, consisting of {threat_count} threats and {opportunity_count} opportunities. At the {confidence_level} confidence level, the total risk exposure is {initial_conf_value/1e6:.1f}M CHF before mitigation and {residual_conf_value/1e6:.1f}M CHF after mitigation measures are applied.
+
+The net risk exposure (threats minus opportunities) stands at {to_metrics['net_initial_exposure']/1e6:.1f}M CHF initially, reducing to {to_metrics['net_residual_exposure']/1e6:.1f}M CHF after mitigation—representing an overall reduction of {risk_reduction_pct:.1f}%."""
+
+    # Build critical findings
+    top_risk = top_risks.iloc[0] if len(top_risks) > 0 else None
+    if top_risk is not None:
+        risk_type = "threat" if top_risk['Initial_EV'] > 0 else "opportunity"
+        critical_findings = f"""**Highest-Impact Risk**: "{top_risk['Risk Description']}" (Risk ID: {top_risk['Risk ID']}) is the most significant {risk_type} with an expected value of {top_risk['Initial_EV']/1e6:.2f}M CHF.
+
+**High-Priority Risks**: {len(high_priority)} risks have been identified as high-priority (likelihood ≥50% AND impact ≥5M CHF), requiring immediate attention.
+
+**Threat Exposure**: Total threat exposure is {to_metrics['threat_initial_ev']/1e6:.1f}M CHF, with planned mitigations reducing this by {to_metrics['threat_reduction']/1e6:.1f}M CHF ({(to_metrics['threat_reduction']/to_metrics['threat_initial_ev']*100) if to_metrics['threat_initial_ev'] > 0 else 0:.1f}%).
+
+**Opportunity Potential**: {opportunity_count} opportunities have been identified with a combined potential benefit of {abs(to_metrics['opportunity_initial_ev'])/1e6:.1f}M CHF."""
+    else:
+        critical_findings = "No risks identified in the portfolio."
+
+    # Build top 5 risks summary
+    top_risks_summary = "**Top 5 Risks by Expected Value:**\n\n"
+    for i, (_, risk) in enumerate(top_risks.iterrows(), 1):
+        risk_type_icon = "⚠️" if risk['Initial_EV'] > 0 else "✅"
+        top_risks_summary += f"{i}. {risk_type_icon} **Risk {risk['Risk ID']}**: {risk['Risk Description'][:80]}{'...' if len(risk['Risk Description']) > 80 else ''}\n"
+        top_risks_summary += f"   - Expected Value: {risk['Initial_EV']/1e6:.2f}M CHF | Likelihood: {risk['Initial_Likelihood']*100:.0f}%\n\n"
+
+    # Build sensitivity insights if available
+    if sensitivity_df is not None and len(sensitivity_df) > 0:
+        top_driver = sensitivity_df.iloc[0]
+        risks_80_pct = (sensitivity_df['Cumulative %'] <= 80).sum()
+        sensitivity_insights = f"""**Key Risk Drivers**: The top risk driver (Risk {top_driver['Risk ID']}) accounts for {top_driver['Variance %']:.1f}% of total portfolio variance. Just {risks_80_pct} risks drive 80% of the overall uncertainty, following the Pareto principle."""
+    else:
+        sensitivity_insights = ""
+
+    # Build recommendations
+    recommendations = []
+
+    if len(high_priority) >= 3:
+        recommendations.append("**Prioritize High-Impact Risks**: Focus mitigation efforts on the " +
+                              f"{len(high_priority)} high-priority risks that pose the greatest threat to project objectives.")
+
+    if risk_reduction_pct < 30:
+        recommendations.append("**Enhance Mitigation Strategies**: Current mitigation measures achieve only " +
+                              f"{risk_reduction_pct:.1f}% risk reduction. Consider strengthening mitigation plans for top risks.")
+    elif risk_reduction_pct >= 50:
+        recommendations.append("**Maintain Mitigation Momentum**: Current strategies achieve " +
+                              f"{risk_reduction_pct:.1f}% risk reduction. Continue monitoring and executing planned mitigations.")
+
+    if opportunity_count > 0:
+        recommendations.append(f"**Capitalize on Opportunities**: {opportunity_count} opportunities have been identified. " +
+                              "Develop action plans to maximize potential benefits.")
+
+    if sensitivity_df is not None and len(sensitivity_df) > 0:
+        risks_80_pct = (sensitivity_df['Cumulative %'] <= 80).sum()
+        recommendations.append(f"**Focus on Key Drivers**: {risks_80_pct} risks drive 80% of uncertainty. " +
+                              "Concentrate resources on these high-impact items.")
+
+    recommendations_text = "\n\n".join(recommendations) if recommendations else "No specific recommendations at this time."
+
+    # Build mitigation effectiveness summary
+    mitigation_summary = f"""**Mitigation Effectiveness Analysis**:
+
+| Metric | Initial | Residual | Change |
+|--------|---------|----------|--------|
+| Threat Exposure | {to_metrics['threat_initial_ev']/1e6:.1f}M | {to_metrics['threat_residual_ev']/1e6:.1f}M | -{to_metrics['threat_reduction']/1e6:.1f}M |
+| Opportunity Value | {to_metrics['opportunity_initial_ev']/1e6:.1f}M | {to_metrics['opportunity_residual_ev']/1e6:.1f}M | {to_metrics['opportunity_change']/1e6:+.1f}M |
+| Net Exposure | {to_metrics['net_initial_exposure']/1e6:.1f}M | {to_metrics['net_residual_exposure']/1e6:.1f}M | -{to_metrics['net_reduction']/1e6:.1f}M |
+
+Overall risk reduction effectiveness: **{risk_reduction_pct:.1f}%**"""
+
+    return {
+        'executive_summary': executive_summary,
+        'critical_findings': critical_findings,
+        'top_risks_summary': top_risks_summary,
+        'sensitivity_insights': sensitivity_insights,
+        'recommendations': recommendations_text,
+        'mitigation_summary': mitigation_summary,
+        'risk_reduction_pct': risk_reduction_pct,
+        'total_risks': total_risks,
+        'threat_count': threat_count,
+        'opportunity_count': opportunity_count
     }
 
 def create_tornado_chart(df, top_n=15):
@@ -2358,6 +2778,35 @@ def add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidenc
             f'(Expected Value: {risk["Initial_EV"]/1e6:.2f}M CHF)'
         )
 
+    doc.add_paragraph()  # Spacing
+
+    # ========== MANAGEMENT RECOMMENDATIONS SECTION ==========
+    # Generate narrative for recommendations
+    narrative = generate_risk_narrative(df, initial_stats, residual_stats, confidence_level)
+
+    rec_heading = doc.add_heading('Management Recommendations', 2)
+    for run in rec_heading.runs:
+        run.font.name = 'Calibri'
+        run.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Add recommendations (clean markdown formatting for Word)
+    recommendations_text = narrative['recommendations']
+    # Split by double newline to get individual recommendations
+    rec_items = [r.strip() for r in recommendations_text.split('\n\n') if r.strip()]
+
+    for rec in rec_items:
+        # Clean markdown bold markers
+        clean_rec = rec.replace('**', '')
+        rec_para = doc.add_paragraph(style='List Bullet')
+        # Split on first colon to get title and content
+        if ':' in clean_rec:
+            parts = clean_rec.split(':', 1)
+            rec_para.add_run(parts[0] + ': ').bold = True
+            if len(parts) > 1:
+                rec_para.add_run(parts[1].strip())
+        else:
+            rec_para.add_run(clean_rec)
+
     doc.add_page_break()
 
 def add_docx_contingency_section(doc, initial_stats, residual_stats, df, confidence_level):
@@ -3101,7 +3550,36 @@ def main():
                 st.metric("Net Benefit", f"{net_benefit/1e6:.2f}M CHF")
 
             st.markdown("---")
-            
+
+            # Executive Risk Narrative Section
+            st.subheader("📝 Executive Risk Narrative")
+
+            # Generate the narrative
+            narrative = generate_risk_narrative(df_with_roi, initial_stats, residual_stats,
+                                               confidence_level, sensitivity_df)
+
+            # Display narrative in expandable sections
+            with st.expander("📋 Executive Summary", expanded=True):
+                st.markdown(narrative['executive_summary'])
+
+            with st.expander("🔍 Critical Findings", expanded=False):
+                st.markdown(narrative['critical_findings'])
+
+            with st.expander("🏆 Top 5 Risks", expanded=False):
+                st.markdown(narrative['top_risks_summary'])
+
+            with st.expander("💡 Recommendations", expanded=False):
+                st.markdown(narrative['recommendations'])
+
+            with st.expander("📊 Mitigation Effectiveness", expanded=False):
+                st.markdown(narrative['mitigation_summary'])
+
+            if narrative['sensitivity_insights']:
+                with st.expander("🎯 Sensitivity Insights", expanded=False):
+                    st.markdown(narrative['sensitivity_insights'])
+
+            st.markdown("---")
+
             # Tornado chart
             st.subheader("Top Risks by Expected Value")
             tornado_fig = create_tornado_chart(df_with_roi, top_n=15)
@@ -3155,12 +3633,12 @@ def main():
             st.dataframe(stats_df, use_container_width=True, hide_index=True)
         
         with tab2:
-            st.header("Risk Visualization - Matrix, Heatmap & Bubble Charts")
-            
+            st.header("Risk Visualization - Matrix, Heatmap, Bubble & 3D Charts")
+
             # Add view selector
             view_type = st.radio(
                 "Select Visualization Type:",
-                ["Risk Matrix (Scatter)", "Risk Heatmap (Grid)", "Risk Bubble Chart"],
+                ["Risk Matrix (Scatter)", "Risk Heatmap (Grid)", "Risk Bubble Chart", "3D Risk Landscape"],
                 horizontal=True
             )
             
@@ -3214,19 +3692,76 @@ def main():
                                 high_impact_high_prob_initial * 100) if high_impact_high_prob_initial > 0 else 0
                     st.metric("High-Risk Reduction", f"{reduction:.1f}%")
             
-            else:  # Bubble Chart
+            elif view_type == "Risk Bubble Chart":
                 with col1:
                     st.subheader("Initial Risk Bubble Chart")
                     st.info("📊 Bubble size represents expected value of each risk")
                     initial_bubble = create_risk_bubble_chart(df, 'initial')
                     st.plotly_chart(initial_bubble, use_container_width=True)
-                
+
                 with col2:
                     st.subheader("Residual Risk Bubble Chart")
                     st.info("📊 Shows risk positioning after mitigation")
                     residual_bubble = create_risk_bubble_chart(df, 'residual')
                     st.plotly_chart(residual_bubble, use_container_width=True)
-        
+
+            else:  # 3D Risk Landscape
+                st.subheader("3D Risk Landscape Visualization")
+                st.info("""
+                🌐 **3D Risk Landscape** provides an immersive view of your risk portfolio:
+                - **X-axis**: Likelihood (0-100%)
+                - **Y-axis**: Impact (M CHF)
+                - **Z-axis**: Expected Value (M CHF)
+                - **Red spheres**: Threats (positive EV)
+                - **Green diamonds**: Opportunities (negative EV)
+                - **Gray plane**: Zero EV threshold
+
+                💡 **Tip**: Click and drag to rotate the 3D view. Use scroll to zoom.
+                """)
+
+                view_3d_type = st.radio(
+                    "3D View Mode:",
+                    ["Side-by-Side Comparison", "Initial Only", "Residual Only"],
+                    horizontal=True,
+                    key="3d_view_mode"
+                )
+
+                if view_3d_type == "Side-by-Side Comparison":
+                    comparison_3d = create_3d_risk_comparison(df)
+                    st.plotly_chart(comparison_3d, use_container_width=True)
+                elif view_3d_type == "Initial Only":
+                    initial_3d = create_3d_risk_surface(df, 'initial')
+                    st.plotly_chart(initial_3d, use_container_width=True)
+                else:
+                    residual_3d = create_3d_risk_surface(df, 'residual')
+                    st.plotly_chart(residual_3d, use_container_width=True)
+
+                # Add 3D insights
+                st.markdown("---")
+                st.subheader("3D Landscape Insights")
+
+                to_metrics = calculate_threat_opportunity_metrics(df)
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("Threats Above Zero Plane",
+                             to_metrics['threat_count'],
+                             help="Number of risks with positive Expected Value")
+                with col2:
+                    st.metric("Opportunities Below Zero Plane",
+                             to_metrics['opportunity_count'],
+                             help="Number of risks with negative Expected Value (benefits)")
+                with col3:
+                    # Count high-risk items (high EV, high likelihood)
+                    high_risk_3d = len(df[(df['Initial_EV'] > 1e6) & (df['Initial_Likelihood'] > 0.5)])
+                    st.metric("High-Risk Zone (>50% likelihood, >1M EV)",
+                             high_risk_3d)
+                with col4:
+                    # Average height (EV) of threats
+                    avg_threat_ev = to_metrics['threat_initial_ev'] / to_metrics['threat_count'] if to_metrics['threat_count'] > 0 else 0
+                    st.metric("Avg Threat Height (EV)",
+                             f"{avg_threat_ev/1e6:.2f}M CHF")
+
         with tab3:
             st.header("Enhanced Sensitivity Analysis")
             
