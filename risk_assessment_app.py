@@ -4786,7 +4786,7 @@ def add_docx_narrative_section(doc, df, initial_stats, residual_stats, confidenc
 
     doc.add_paragraph()  # Spacing
 
-    # Top Risks subsection
+    # Top Risks subsection - Enhanced graphical presentation
     top_risks_heading = doc.add_heading('Top Risk Drivers', 2)
     for run in top_risks_heading.runs:
         run.font.name = 'Calibri'
@@ -4797,23 +4797,79 @@ def add_docx_narrative_section(doc, df, initial_stats, residual_stats, confidenc
     df_sorted['Abs_EV'] = np.abs(df_sorted['Initial_EV'])
     top_risks = df_sorted.nlargest(5, 'Abs_EV')
 
-    for idx, (_, risk) in enumerate(top_risks.iterrows(), 1):
+    # Create professional table for top risks
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+
+    risk_table = doc.add_table(rows=len(top_risks) + 1, cols=4)
+    risk_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # Set headers
+    headers = ['Risk ID', 'Description', 'Expected Value', 'Likelihood']
+    for j, header in enumerate(headers):
+        cell = risk_table.cell(0, j)
+        cell.text = header
+        # Apply header styling
+        from report_formatter import set_cell_shading
+        set_cell_shading(cell, '1F4E79')
+        for para in cell.paragraphs:
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in para.runs:
+                run.font.bold = True
+                run.font.color.rgb = RGBColor(255, 255, 255)
+                run.font.size = Pt(10)
+
+    # Add risk data rows
+    for idx, (_, risk) in enumerate(top_risks.iterrows(), start=1):
         risk_type = "Threat" if risk['Initial_EV'] > 0 else "Opportunity"
-        risk_para = doc.add_paragraph(style='List Number')
-        risk_para.add_run(f'Risk {risk["Risk ID"]} ({risk_type}): ').bold = True
-        risk_para.add_run(
-            f'{risk["Risk Description"][:100]}{"..." if len(risk["Risk Description"]) > 100 else ""}\n'
-        )
-        detail_para = doc.add_paragraph()
-        detail_para.paragraph_format.left_indent = Pt(36)
-        detail_run = detail_para.add_run(
-            f'Expected Value: {risk["Initial_EV"]/1e6:.2f}M CHF | '
-            f'Likelihood: {risk["Initial_Likelihood"]*100:.0f}% | '
-            f'Impact: {risk["Initial risk_Value"]/1e6:.2f}M CHF'
-        )
-        detail_run.font.size = Pt(10)
-        detail_run.font.italic = True
-        detail_run.font.color.rgb = RGBColor(89, 89, 89)
+
+        # Risk ID with type indicator
+        id_cell = risk_table.cell(idx, 0)
+        id_para = id_cell.paragraphs[0]
+        id_para.clear()
+        id_run = id_para.add_run(f'Risk {risk["Risk ID"]}')
+        id_run.font.bold = True
+        id_run.font.size = Pt(10)
+        id_para.add_run('\n')
+        type_run = id_para.add_run(f'({risk_type})')
+        type_run.font.size = Pt(9)
+        type_run.font.italic = True
+        type_run.font.color.rgb = RGBColor(229, 57, 53) if risk_type == "Threat" else RGBColor(67, 160, 71)
+
+        # Description (truncated)
+        desc_cell = risk_table.cell(idx, 1)
+        desc = str(risk['Risk Description'])[:80]
+        desc_cell.text = desc + ('...' if len(str(risk['Risk Description'])) > 80 else '')
+        for para in desc_cell.paragraphs:
+            for run in para.runs:
+                run.font.size = Pt(10)
+
+        # Expected Value
+        ev_cell = risk_table.cell(idx, 2)
+        ev_cell.text = f"{risk['Initial_EV']/1e6:.2f}M CHF"
+        for para in ev_cell.paragraphs:
+            para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            for run in para.runs:
+                run.font.size = Pt(10)
+                run.font.bold = True
+
+        # Likelihood
+        lh_cell = risk_table.cell(idx, 3)
+        lh_cell.text = f"{risk['Initial_Likelihood']*100:.0f}%"
+        for para in lh_cell.paragraphs:
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in para.runs:
+                run.font.size = Pt(10)
+
+        # Alternate row shading
+        if idx % 2 == 0:
+            for j in range(4):
+                set_cell_shading(risk_table.cell(idx, j), 'F5F5F5')
+
+    # Set column widths
+    risk_table.columns[0].width = Inches(1.0)
+    risk_table.columns[1].width = Inches(3.2)
+    risk_table.columns[2].width = Inches(1.2)
+    risk_table.columns[3].width = Inches(0.9)
 
     doc.add_paragraph()  # Spacing
 
@@ -5444,12 +5500,14 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
     threat_count = len(df[df['Initial_EV'] > 0])
     opportunity_count = len(df[df['Initial_EV'] < 0])
 
+    # Convert to millions for display
+    M = 1_000_000
     kpi_metrics = {
         'total_risks': len(df),
         'threats': threat_count,
         'opportunities': opportunity_count,
-        'initial_p80': initial_selected,
-        'residual_p80': residual_selected,
+        'initial_p80': initial_selected / M,  # Convert to millions
+        'residual_p80': residual_selected / M,  # Convert to millions
         'risk_reduction_pct': risk_reduction_pct,
         'risk_profile': get_risk_profile(risk_reduction_pct)['label'],
     }
@@ -5862,43 +5920,40 @@ def add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img):
 
         doc.add_paragraph()
 
-        # Create enhanced table with visual indicators
-        table = doc.add_table(rows=len(top_10) + 1, cols=4)
+        # Create enhanced table with 3 columns (no rank column per user request)
+        table = doc.add_table(rows=len(top_10) + 1, cols=3)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-        headers = ['Rank', 'Risk ID', 'Description', 'Contribution']
+        headers = ['Risk ID', 'Description', 'Variance Contribution']
         for j, header in enumerate(headers):
             table.cell(0, j).text = header
 
         for i, (_, row) in enumerate(top_10.iterrows(), start=1):
-            # Rank with visual indicator
-            rank_cell = table.cell(i, 0)
-            rank_cell.text = f"#{i}"
-
             # Risk ID
-            table.cell(i, 1).text = str(row.get('Risk ID', ''))
+            id_cell = table.cell(i, 0)
+            id_cell.text = str(row.get('Risk ID', ''))
 
             # Description (truncated)
-            desc = str(row.get('Risk Description', ''))[:45]
-            table.cell(i, 2).text = desc + ('...' if len(str(row.get('Risk Description', ''))) > 45 else '')
+            desc = str(row.get('Risk Description', ''))[:50]
+            desc_cell = table.cell(i, 1)
+            desc_cell.text = desc + ('...' if len(str(row.get('Risk Description', ''))) > 50 else '')
 
-            # Contribution with visual bar representation
+            # Variance Contribution percentage
             contribution = row.get('Variance_Contribution_Pct', 0)
-            contrib_cell = table.cell(i, 3)
+            contrib_cell = table.cell(i, 2)
             contrib_cell.text = format_percentage(contribution)
 
-            # Highlight top 3 risks
+            # Highlight top 3 risks with light orange background
             if i <= 3:
-                for cell in [rank_cell, table.cell(i, 1), table.cell(i, 2), contrib_cell]:
+                for cell in [id_cell, desc_cell, contrib_cell]:
                     set_cell_shading(cell, 'FFF3E0')  # Light orange for top 3
 
         apply_professional_table_style(table)
 
         # Set column widths
-        table.columns[0].width = Inches(0.6)
-        table.columns[1].width = Inches(0.9)
-        table.columns[2].width = Inches(3.0)
-        table.columns[3].width = Inches(1.2)
+        table.columns[0].width = Inches(0.9)
+        table.columns[1].width = Inches(3.5)
+        table.columns[2].width = Inches(1.3)
 
 
 def add_docx_mitigation_section_enhanced(doc, df_with_roi, roi_img):
@@ -5964,12 +6019,16 @@ def add_docx_confidence_comparison_section_enhanced(doc, confidence_comparison, 
     for j, header in enumerate(headers):
         table.cell(0, j).text = header
 
+    # Access data using correct dictionary structure
+    percentiles = confidence_comparison.get('percentiles', {})
+    total_contingency = confidence_comparison.get('total_contingency', {})
+    mitigation_cost = confidence_comparison.get('mitigation_cost', 0)
+
     for i, level in enumerate(['P50', 'P80', 'P95'], start=1):
-        data = confidence_comparison.get(level, {})
         table.cell(i, 0).text = level
-        table.cell(i, 1).text = format_currency(data.get('residual_value', 0) / M)
-        table.cell(i, 2).text = format_currency(data.get('mitigation_cost', 0) / M)
-        table.cell(i, 3).text = format_currency(data.get('total_contingency', 0) / M)
+        table.cell(i, 1).text = format_currency(percentiles.get(level, 0) / M)
+        table.cell(i, 2).text = format_currency(mitigation_cost / M)
+        table.cell(i, 3).text = format_currency(total_contingency.get(level, 0) / M)
 
     apply_professional_table_style(table)
 
