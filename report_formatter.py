@@ -43,8 +43,42 @@ class FigureCounter:
         self.count = 0
 
 
-# Global figure counter
+class SectionCounter:
+    """Track section numbers for document headings."""
+
+    def __init__(self):
+        self.level1 = 0
+        self.level2 = 0
+        self.level3 = 0
+
+    def next_level1(self) -> str:
+        """Get next level 1 section number."""
+        self.level1 += 1
+        self.level2 = 0
+        self.level3 = 0
+        return str(self.level1)
+
+    def next_level2(self) -> str:
+        """Get next level 2 section number."""
+        self.level2 += 1
+        self.level3 = 0
+        return f"{self.level1}.{self.level2}"
+
+    def next_level3(self) -> str:
+        """Get next level 3 section number."""
+        self.level3 += 1
+        return f"{self.level1}.{self.level2}.{self.level3}"
+
+    def reset(self):
+        """Reset counters for new document."""
+        self.level1 = 0
+        self.level2 = 0
+        self.level3 = 0
+
+
+# Global counters
 figure_counter = FigureCounter()
+section_counter = SectionCounter()
 
 
 # =============================================================================
@@ -260,14 +294,18 @@ def add_cover_page(
             - report_date: Report date string
         logo_path: Path to logo image file (optional)
     """
-    # Add logo if provided
+    # Add logo if provided - larger and properly positioned
     if logo_path and os.path.exists(logo_path):
         logo_para = document.add_paragraph()
+        logo_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
         logo_run = logo_para.add_run()
-        logo_run.add_picture(logo_path, width=Cm(DOCUMENT_SETTINGS['logo_width_cm']))
+        try:
+            logo_run.add_picture(logo_path, width=Cm(6))  # Larger logo
+        except Exception:
+            pass  # Skip if logo fails to load
 
     # Add spacing
-    for _ in range(3):
+    for _ in range(2):
         document.add_paragraph()
 
     # Main title
@@ -351,62 +389,7 @@ def add_cover_page(
     info_run.font.size = Pt(11)
     info_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['neutral']))
 
-    # Add spacing
-    for _ in range(2):
-        document.add_paragraph()
-
-    # Document Control table
-    dc_title = document.add_paragraph()
-    dc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    dc_run = dc_title.add_run('DOCUMENT CONTROL')
-    dc_run.font.bold = True
-    dc_run.font.size = Pt(11)
-    dc_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
-
-    dc_table = document.add_table(rows=2, cols=4)
-    dc_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-    # Headers
-    headers = ['Rev', 'Date', 'Author', 'Description']
-    for j, header in enumerate(headers):
-        cell = dc_table.cell(0, j)
-        cell.text = header
-
-    # First revision entry
-    revision = config.get('revision', 'A')
-    author = config.get('author', '')
-    dc_data = [revision, report_date, author, 'Initial Issue']
-    for j, data in enumerate(dc_data):
-        cell = dc_table.cell(1, j)
-        cell.text = data
-
-    apply_professional_table_style(dc_table)
-
-    # Set column widths
-    dc_table.columns[0].width = Inches(0.8)
-    dc_table.columns[1].width = Inches(1.2)
-    dc_table.columns[2].width = Inches(1.8)
-    dc_table.columns[3].width = Inches(2.0)
-
-    # Add spacing
-    for _ in range(2):
-        document.add_paragraph()
-
-    # Approval signatures
-    approval_lines = [
-        ('Prepared by:', '________________', 'Date: ________'),
-        ('Reviewed by:', '________________', 'Date: ________'),
-        ('Approved by:', '________________', 'Date: ________'),
-    ]
-
-    for label, sig, date in approval_lines:
-        sig_para = document.add_paragraph()
-        sig_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        sig_run = sig_para.add_run(f"{label}  {sig}    {date}")
-        sig_run.font.size = Pt(10)
-        sig_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['neutral']))
-
-    # Page break after cover
+    # Page break after cover (no document control here - moved to Appendix E)
     document.add_page_break()
 
 
@@ -811,15 +794,52 @@ def add_assumptions_appendix(document: Document, simulation_params: Optional[Dic
     disclaimer_run.font.italic = True
 
 
-def add_approval_appendix(document: Document, approval_roles: Optional[List[Tuple]] = None):
+def add_approval_appendix(document: Document, approval_roles: Optional[List[Tuple]] = None, config: Optional[Dict] = None):
     """
-    Add Document Approval sign-off page.
+    Add Document Approval sign-off page with document control section.
 
     Args:
         document: python-docx Document object
         approval_roles: List of (role, title, name) tuples
+        config: Optional configuration dict with revision, author, date info
     """
     document.add_heading('Appendix E: Document Approval', level=1)
+
+    # Document Control Section
+    document.add_heading('Document Control', level=2)
+
+    if config is None:
+        config = {}
+
+    report_date = config.get('report_date', datetime.now().strftime('%d %B %Y'))
+    revision = config.get('revision', 'A')
+    author = config.get('author', '')
+
+    dc_table = document.add_table(rows=2, cols=4)
+    dc_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # Headers
+    dc_headers = ['Rev', 'Date', 'Author', 'Description']
+    for j, header in enumerate(dc_headers):
+        dc_table.cell(0, j).text = header
+
+    # First revision entry
+    dc_data = [revision, report_date, author, 'Initial Issue']
+    for j, data in enumerate(dc_data):
+        dc_table.cell(1, j).text = data
+
+    apply_professional_table_style(dc_table)
+
+    # Set column widths
+    dc_table.columns[0].width = Inches(0.8)
+    dc_table.columns[1].width = Inches(1.5)
+    dc_table.columns[2].width = Inches(2.0)
+    dc_table.columns[3].width = Inches(2.2)
+
+    document.add_paragraph()
+
+    # Approval Section
+    document.add_heading('Document Approval', level=2)
 
     document.add_paragraph(
         'This document has been reviewed and approved by the following personnel:'
@@ -939,9 +959,55 @@ def set_document_properties(
 
 
 # =============================================================================
+# NUMBERED HEADINGS
+# =============================================================================
+
+def add_numbered_heading(document: Document, text: str, level: int = 1, is_appendix: bool = False):
+    """
+    Add a numbered heading to the document.
+
+    Args:
+        document: python-docx Document object
+        text: Heading text
+        level: Heading level (1, 2, or 3)
+        is_appendix: If True, don't add number prefix (appendices have their own numbering)
+
+    Returns:
+        The created paragraph object
+    """
+    if is_appendix:
+        # Appendices use letter-based numbering already in the text
+        heading = document.add_heading(text, level=level)
+    else:
+        # Add section number prefix
+        if level == 1:
+            num = section_counter.next_level1()
+            heading = document.add_heading(f"{num}. {text}", level=level)
+        elif level == 2:
+            num = section_counter.next_level2()
+            heading = document.add_heading(f"{num} {text}", level=level)
+        else:
+            num = section_counter.next_level3()
+            heading = document.add_heading(f"{num} {text}", level=level)
+
+    # Apply KVI styling
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        if level == 1:
+            run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+        elif level == 2:
+            run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['primary']))
+        else:
+            run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['neutral']))
+
+    return heading
+
+
+# =============================================================================
 # RESET FUNCTION
 # =============================================================================
 
 def reset_for_new_document():
     """Reset global state for generating a new document."""
     figure_counter.reset()
+    section_counter.reset()
