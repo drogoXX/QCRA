@@ -5907,7 +5907,8 @@ def add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img):
         set_cell_margins(summary_cell, top=100, bottom=100, left=150, right=150)
 
         top_10 = sensitivity_df.head(10)
-        total_contribution = top_10['Variance_Contribution_Pct'].sum() if 'Variance_Contribution_Pct' in top_10.columns else 0
+        # Use correct column name 'Variance %' from sensitivity analysis
+        total_contribution = top_10['Variance %'].sum() if 'Variance %' in top_10.columns else 0
 
         summary_para = summary_cell.paragraphs[0]
         summary_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -5938,8 +5939,8 @@ def add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img):
             desc_cell = table.cell(i, 1)
             desc_cell.text = desc + ('...' if len(str(row.get('Risk Description', ''))) > 50 else '')
 
-            # Variance Contribution percentage
-            contribution = row.get('Variance_Contribution_Pct', 0)
+            # Variance Contribution percentage (column name is 'Variance %')
+            contribution = row.get('Variance %', 0)
             contrib_cell = table.cell(i, 2)
             contrib_cell.text = format_percentage(contribution)
 
