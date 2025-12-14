@@ -10,7 +10,30 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import io
+import os
 from datetime import datetime
+
+# Import KVI formatting modules
+from report_config import (
+    KVI_COLORS, FONTS, FONT_SIZES, DOCUMENT_SETTINGS,
+    GLOSSARY_TERMS, DEFAULT_ASSUMPTIONS, DEFAULT_LIMITATIONS,
+    CHART_CAPTIONS, VALID_PHASES
+)
+from utils import (
+    format_currency, format_percentage, format_number,
+    pluralize, pluralize_noun, pluralize_verb,
+    format_risk_statement, calculate_reduction_percentage,
+    get_risk_profile, hex_to_rgb
+)
+from report_formatter import (
+    FigureCounter, figure_counter, reset_for_new_document,
+    set_cell_shading, set_cell_margins, set_cell_border, set_row_height,
+    apply_professional_table_style, configure_heading_styles,
+    add_cover_page, add_table_of_contents, add_header_footer,
+    add_kpi_summary_box, add_captioned_image, get_chart_caption,
+    add_glossary_appendix, add_assumptions_appendix, add_approval_appendix,
+    add_phase_summary_table, set_document_properties
+)
 
 # Page configuration
 st.set_page_config(
@@ -5343,37 +5366,104 @@ def add_docx_methodology_appendix(doc, n_simulations, confidence_level):
 
 def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensitivity_df,
                         initial_results, residual_results, n_simulations, confidence_level,
-                        current_df=None):
+                        current_df=None, report_config=None):
     """
-    Generate comprehensive DOCX report with embedded charts
+    Generate comprehensive DOCX report with embedded charts and professional formatting.
 
     Args:
+        initial_stats: Statistics from initial risk Monte Carlo simulation
+        residual_stats: Statistics from residual risk Monte Carlo simulation
+        df: Risk data DataFrame
+        df_with_roi: Risk data with ROI calculations
+        sensitivity_df: Sensitivity analysis results
+        initial_results: Raw initial simulation results
+        residual_results: Raw residual simulation results
+        n_simulations: Number of Monte Carlo simulations
+        confidence_level: Selected confidence level (e.g., 'P80')
         current_df: Optional DataFrame from currently uploaded file (for phase data check)
+        report_config: Optional dict with report configuration overrides
 
     Returns:
         BytesIO object containing the Word document
     """
+    from docx import Document
+    from docx.shared import Inches
+
+    # Reset figure counter for new document
+    reset_for_new_document()
+
     # Use current_df for phase column checking if provided, otherwise use df
     phase_check_df = current_df if current_df is not None else df
-    from docx import Document
+
+    # Build report configuration
+    config = {
+        'project_name': 'PROTOS CC Carbon Capture',
+        'contract_ref': 'KVI-2024-001',
+        'doc_number': 'RA-001',
+        'revision': 'A',
+        'confidence_level': int(confidence_level.replace('P', '')),
+        'classification': DOCUMENT_SETTINGS['default_classification'],
+        'author': '',
+        'report_date': datetime.now().strftime('%d %B %Y'),
+    }
+
+    # Override with any provided config
+    if report_config:
+        config.update(report_config)
+
+    # Get logo path
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    logo_path = os.path.join(script_dir, 'assets', 'kanadevia_logo.png')
+    if not os.path.exists(logo_path):
+        logo_path = None
 
     doc = Document()
 
-    # Add cover page
-    add_docx_cover_page(doc, confidence_level)
+    # Configure heading styles with KVI branding
+    with st.spinner("Configuring document styles..."):
+        configure_heading_styles(doc)
 
-    # Add executive summary
-    add_docx_executive_summary(doc, initial_stats, residual_stats, df, confidence_level)
+    # Set document properties (metadata)
+    set_document_properties(doc, config['project_name'], config.get('author', DOCUMENT_SETTINGS['company_name']))
+
+    # Add professional cover page
+    with st.spinner("Generating cover page..."):
+        add_cover_page(doc, config, logo_path)
+
+    # Add Table of Contents
+    with st.spinner("Adding table of contents..."):
+        add_table_of_contents(doc)
+
+    # Calculate KPI metrics for summary box
+    initial_selected = get_confidence_value(initial_stats, confidence_level)
+    residual_selected = get_confidence_value(residual_stats, confidence_level)
+    risk_reduction_pct = calculate_reduction_percentage(initial_selected, residual_selected)
+
+    # Count threats vs opportunities
+    threat_count = len(df[df['Initial_EV'] > 0])
+    opportunity_count = len(df[df['Initial_EV'] < 0])
+
+    kpi_metrics = {
+        'total_risks': len(df),
+        'threats': threat_count,
+        'opportunities': opportunity_count,
+        'initial_p80': initial_selected,
+        'residual_p80': residual_selected,
+        'risk_reduction_pct': risk_reduction_pct,
+        'risk_profile': get_risk_profile(risk_reduction_pct)['label'],
+    }
+
+    # Add executive summary with KPI box
+    add_docx_executive_summary_enhanced(doc, initial_stats, residual_stats, df, confidence_level, kpi_metrics)
 
     # Add contingency allocation section
     add_docx_contingency_section(doc, initial_stats, residual_stats, df, confidence_level)
 
-    # Generate and embed charts using matplotlib (reliable, no external dependencies)
-    # Side-by-side comparison charts showing initial vs residual
+    # Generate and embed charts using matplotlib with figure captions
     with st.spinner("Generating risk heatmap comparison chart..."):
         risk_matrix_img = create_matplotlib_heatmap_combined(df)
 
-    add_docx_risk_portfolio_section(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img)
+    add_docx_risk_portfolio_section_enhanced(doc, initial_stats, residual_stats, confidence_level, risk_matrix_img)
 
     # Add Executive Risk Narrative section
     with st.spinner("Generating executive risk narrative..."):
@@ -5383,26 +5473,26 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
     with st.spinner("Generating 3D risk landscape chart..."):
         chart_3d_img = create_matplotlib_3d_comparison(df)
 
-    add_docx_3d_visualization_section(doc, df, chart_3d_img)
+    add_docx_3d_visualization_section_enhanced(doc, df, chart_3d_img)
 
     # Monte Carlo section with side-by-side comparison charts
     with st.spinner("Generating Monte Carlo comparison charts..."):
         cdf_img = create_matplotlib_cdf_combined(initial_results, initial_stats, residual_results, residual_stats, confidence_level)
         hist_img = create_matplotlib_histogram_combined(initial_results, initial_stats, residual_results, residual_stats)
 
-    add_docx_monte_carlo_section(doc, n_simulations, cdf_img, hist_img)
+    add_docx_monte_carlo_section_enhanced(doc, n_simulations, cdf_img, hist_img)
 
     # Sensitivity section with Pareto chart
     with st.spinner("Generating sensitivity analysis chart..."):
         pareto_img = create_matplotlib_pareto(sensitivity_df, top_n=20)
 
-    add_docx_sensitivity_section(doc, sensitivity_df, pareto_img)
+    add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img)
 
     # Mitigation section with ROI chart
     with st.spinner("Generating mitigation analysis chart..."):
         roi_img = create_matplotlib_roi_chart(df_with_roi, top_n=20)
 
-    add_docx_mitigation_section(doc, df_with_roi, roi_img)
+    add_docx_mitigation_section_enhanced(doc, df_with_roi, roi_img)
 
     # Confidence Level Comparison section
     with st.spinner("Generating confidence level comparison..."):
@@ -5412,7 +5502,7 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
         )
         confidence_chart_img = create_matplotlib_confidence_comparison(confidence_comparison, confidence_level)
 
-    add_docx_confidence_comparison_section(doc, confidence_comparison, confidence_chart_img, confidence_level)
+    add_docx_confidence_comparison_section_enhanced(doc, confidence_comparison, confidence_chart_img, confidence_level)
 
     # Time-Phased Contingency Profile section (only if uploaded data has phase columns WITH data)
     has_phase_data = (
@@ -5468,8 +5558,31 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
                 st.warning(f"Could not generate time-phased section: {str(e)}")
 
     # Appendices
-    add_docx_risk_register_appendix(doc, df)
-    add_docx_methodology_appendix(doc, n_simulations, confidence_level)
+    with st.spinner("Generating appendices..."):
+        # Appendix A: Risk Register
+        add_docx_risk_register_appendix(doc, df)
+
+        # Appendix B: Methodology
+        add_docx_methodology_appendix(doc, n_simulations, confidence_level)
+
+        # Appendix C: Glossary of Terms (new)
+        add_glossary_appendix(doc)
+
+        # Appendix D: Assumptions and Limitations (new)
+        simulation_params = {
+            'iterations': n_simulations,
+            'confidence_level': int(confidence_level.replace('P', '')),
+            'data_date': datetime.now().strftime('%d %B %Y'),
+        }
+        add_assumptions_appendix(doc, simulation_params)
+
+        # Appendix E: Document Approval (new)
+        add_approval_appendix(doc)
+
+    # Add headers and footers (must be done after all content is added)
+    with st.spinner("Adding headers and footers..."):
+        doc_ref = f"{config['doc_number']} Rev {config['revision']}"
+        add_header_footer(doc, config['project_name'], doc_ref, config['report_date'])
 
     # Save to BytesIO
     docx_bytes = io.BytesIO()
@@ -5477,6 +5590,357 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
     docx_bytes.seek(0)
 
     return docx_bytes
+
+
+def add_docx_executive_summary_enhanced(doc, initial_stats, residual_stats, df, confidence_level, kpi_metrics):
+    """Add enhanced executive summary section with KPI summary box."""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Section heading
+    heading = doc.add_heading('Executive Summary', 1)
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+
+    # Add KPI Summary Box
+    add_kpi_summary_box(doc, kpi_metrics)
+
+    # Get values for text
+    initial_selected = get_confidence_value(initial_stats, confidence_level)
+    residual_selected = get_confidence_value(residual_stats, confidence_level)
+    risk_reduction_selected = initial_selected - residual_selected
+    risk_reduction_pct = (risk_reduction_selected / initial_selected * 100) if initial_selected > 0 else 0
+
+    # Calculate deterministic values
+    initial_ev_total = df['Initial_EV'].sum()
+    residual_ev_total = df['Residual_EV'].sum()
+    total_mitigation_cost = df['Cost of Measures_Value'].sum()
+
+    # Overview paragraph with proper pluralization
+    intro = doc.add_paragraph()
+    intro_bold = intro.add_run('Overview: ')
+    intro_bold.bold = True
+    intro_bold.font.name = FONTS['body']
+    intro_bold.font.size = Pt(FONT_SIZES['body'])
+
+    risk_noun = pluralize_noun(len(df), 'risk', 'risks')
+    intro_text = intro.add_run(
+        f'This risk assessment analyzes {len(df)} identified {risk_noun} using Monte Carlo simulation '
+        f'with {confidence_level} confidence level. The analysis provides both deterministic (expected value) '
+        f'and probabilistic estimates of total risk exposure, evaluating the effectiveness of planned mitigation measures.'
+    )
+    intro_text.font.name = FONTS['body']
+    intro_text.font.size = Pt(FONT_SIZES['body'])
+
+    doc.add_paragraph()
+
+    # Continue with existing executive summary content...
+    add_docx_executive_summary_content(doc, initial_stats, residual_stats, df, confidence_level)
+
+
+def add_docx_executive_summary_content(doc, initial_stats, residual_stats, df, confidence_level):
+    """Add the main executive summary content (threats/opportunities tables)."""
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+
+    # Get values
+    initial_selected = get_confidence_value(initial_stats, confidence_level)
+    residual_selected = get_confidence_value(residual_stats, confidence_level)
+    risk_reduction_selected = initial_selected - residual_selected
+    risk_reduction_pct = (risk_reduction_selected / initial_selected * 100) if initial_selected > 0 else 0
+
+    # Calculate deterministic values
+    initial_ev_total = df['Initial_EV'].sum()
+    residual_ev_total = df['Residual_EV'].sum()
+    deterministic_reduction = initial_ev_total - residual_ev_total
+    deterministic_reduction_pct = (deterministic_reduction / initial_ev_total * 100) if initial_ev_total > 0 else 0
+    total_mitigation_cost = df['Cost of Measures_Value'].sum()
+
+    # Threat/Opportunity Analysis
+    threats = df[df['Initial_EV'] > 0]
+    opportunities = df[df['Initial_EV'] < 0]
+
+    threat_count = len(threats)
+    opportunity_count = len(opportunities)
+
+    initial_threat_ev = threats['Initial_EV'].sum() if len(threats) > 0 else 0
+    residual_threat_ev = threats['Residual_EV'].sum() if len(threats) > 0 else 0
+    threat_reduction = initial_threat_ev - residual_threat_ev
+    threat_reduction_pct = (threat_reduction / initial_threat_ev * 100) if initial_threat_ev > 0 else 0
+
+    initial_opp_ev = opportunities['Initial_EV'].sum() if len(opportunities) > 0 else 0
+    residual_opp_ev = opportunities['Residual_EV'].sum() if len(opportunities) > 0 else 0
+    opp_improvement = initial_opp_ev - residual_opp_ev
+
+    # Threat/Opportunity heading
+    doc.add_heading('Threat and Opportunity Analysis', 2)
+
+    # Threat summary with proper pluralization
+    threat_verb = pluralize_verb(threat_count, 'has', 'have')
+    threat_noun = pluralize_noun(threat_count, 'threat', 'threats')
+
+    threat_para = doc.add_paragraph()
+    threat_run = threat_para.add_run(f'Threats: ')
+    threat_run.bold = True
+    threat_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['danger']))
+
+    threat_text = threat_para.add_run(
+        f'{threat_count} {threat_noun} {threat_verb} been identified with total expected exposure '
+        f'reducing from {format_currency(initial_threat_ev)} to {format_currency(residual_threat_ev)} '
+        f'({format_percentage(threat_reduction_pct)} reduction).'
+    )
+    threat_text.font.name = FONTS['body']
+    threat_text.font.size = Pt(FONT_SIZES['body'])
+
+    # Opportunity summary with proper pluralization
+    if opportunity_count > 0:
+        opp_verb = pluralize_verb(opportunity_count, 'has', 'have')
+        opp_noun = pluralize_noun(opportunity_count, 'opportunity', 'opportunities')
+
+        opp_para = doc.add_paragraph()
+        opp_run = opp_para.add_run(f'Opportunities: ')
+        opp_run.bold = True
+        opp_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['success']))
+
+        opp_text = opp_para.add_run(
+            f'{opportunity_count} {opp_noun} {opp_verb} been identified with potential benefit '
+            f'of {format_currency(abs(initial_opp_ev))} increasing to {format_currency(abs(residual_opp_ev))}.'
+        )
+        opp_text.font.name = FONTS['body']
+        opp_text.font.size = Pt(FONT_SIZES['body'])
+
+    doc.add_paragraph()
+
+    # Summary tables
+    doc.add_heading('Deterministic Analysis (Expected Values)', 2)
+
+    # Create deterministic metrics table
+    det_table = doc.add_table(rows=5, cols=2)
+    det_data = [
+        ('Metric', 'Value'),
+        ('Initial Risk Exposure (EV)', format_currency(initial_ev_total)),
+        ('Residual Risk Exposure (EV)', format_currency(residual_ev_total)),
+        ('Risk Reduction', format_currency(deterministic_reduction)),
+        ('Reduction Percentage', format_percentage(deterministic_reduction_pct)),
+    ]
+
+    for i, (label, value) in enumerate(det_data):
+        det_table.cell(i, 0).text = label
+        det_table.cell(i, 1).text = value
+
+    apply_professional_table_style(det_table)
+    det_table.columns[0].width = Inches(3)
+    det_table.columns[1].width = Inches(2)
+
+    doc.add_paragraph()
+
+    # Probabilistic Analysis
+    doc.add_heading(f'Probabilistic Analysis ({confidence_level} Confidence)', 2)
+
+    prob_table = doc.add_table(rows=5, cols=2)
+    prob_data = [
+        ('Metric', 'Value'),
+        (f'Initial {confidence_level} Exposure', format_currency(initial_selected)),
+        (f'Residual {confidence_level} Exposure', format_currency(residual_selected)),
+        ('Risk Reduction', format_currency(risk_reduction_selected)),
+        ('Reduction Percentage', format_percentage(risk_reduction_pct)),
+    ]
+
+    for i, (label, value) in enumerate(prob_data):
+        prob_table.cell(i, 0).text = label
+        prob_table.cell(i, 1).text = value
+
+    apply_professional_table_style(prob_table)
+    prob_table.columns[0].width = Inches(3)
+    prob_table.columns[1].width = Inches(2)
+
+    doc.add_paragraph()
+
+
+def add_docx_risk_portfolio_section_enhanced(doc, initial_stats, residual_stats, confidence_level, chart_img):
+    """Add risk portfolio section with captioned figure."""
+    from docx.shared import Inches
+
+    heading = doc.add_heading('Risk Portfolio Overview', 1)
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+
+    para = doc.add_paragraph(
+        'The risk heatmap below shows the distribution of risks by likelihood and impact, '
+        'comparing the initial risk profile (before mitigation) with the residual risk profile (after mitigation).'
+    )
+    para.runs[0].font.name = FONTS['body']
+    para.runs[0].font.size = Pt(FONT_SIZES['body'])
+
+    # Add chart with caption
+    add_captioned_image(doc, chart_img, get_chart_caption('risk_heatmap'), width=Inches(6))
+
+
+def add_docx_3d_visualization_section_enhanced(doc, df, chart_img):
+    """Add 3D visualization section with captioned figure."""
+    from docx.shared import Inches
+
+    heading = doc.add_heading('3D Risk Landscape Visualization', 1)
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+
+    para = doc.add_paragraph(
+        'The 3D risk landscape provides a comprehensive view of the risk portfolio, '
+        'showing the relationship between likelihood, impact, and expected value. '
+        'This visualization helps identify clusters of high-risk items and the overall risk profile.'
+    )
+    para.runs[0].font.name = FONTS['body']
+    para.runs[0].font.size = Pt(FONT_SIZES['body'])
+
+    # Add chart with caption
+    add_captioned_image(doc, chart_img, get_chart_caption('3d_comparison'), width=Inches(6))
+
+
+def add_docx_monte_carlo_section_enhanced(doc, n_simulations, cdf_img, hist_img):
+    """Add Monte Carlo section with captioned figures."""
+    from docx.shared import Inches
+
+    heading = doc.add_heading('Monte Carlo Simulation Results', 1)
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+
+    para = doc.add_paragraph(
+        f'The following charts show the results of {n_simulations:,} Monte Carlo simulation iterations, '
+        f'comparing the probability distributions of initial and residual risk exposure.'
+    )
+    para.runs[0].font.name = FONTS['body']
+    para.runs[0].font.size = Pt(FONT_SIZES['body'])
+
+    # Add CDF chart with caption
+    doc.add_heading('Cumulative Distribution Function (CDF)', 2)
+    add_captioned_image(doc, cdf_img, get_chart_caption('cdf_comparison'), width=Inches(6))
+
+    # Add histogram with caption
+    doc.add_heading('Distribution Histogram', 2)
+    add_captioned_image(doc, hist_img, get_chart_caption('histogram_comparison'), width=Inches(6))
+
+
+def add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img):
+    """Add sensitivity section with captioned figure."""
+    from docx.shared import Inches
+
+    heading = doc.add_heading('Sensitivity Analysis', 1)
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+
+    para = doc.add_paragraph(
+        'The Pareto chart below shows the top risk contributors by variance contribution, '
+        'identifying the risks that have the greatest impact on total portfolio uncertainty.'
+    )
+    para.runs[0].font.name = FONTS['body']
+    para.runs[0].font.size = Pt(FONT_SIZES['body'])
+
+    # Add chart with caption
+    add_captioned_image(doc, pareto_img, get_chart_caption('pareto_chart'), width=Inches(6))
+
+    # Add top risks table
+    if len(sensitivity_df) > 0:
+        doc.add_heading('Top 10 Risk Drivers', 2)
+
+        top_10 = sensitivity_df.head(10)
+        table = doc.add_table(rows=len(top_10) + 1, cols=3)
+
+        headers = ['Risk ID', 'Description', 'Variance Contribution']
+        for j, header in enumerate(headers):
+            table.cell(0, j).text = header
+
+        for i, (_, row) in enumerate(top_10.iterrows(), start=1):
+            table.cell(i, 0).text = str(row.get('Risk ID', ''))
+            desc = str(row.get('Risk Description', ''))[:50]
+            table.cell(i, 1).text = desc + ('...' if len(str(row.get('Risk Description', ''))) > 50 else '')
+            table.cell(i, 2).text = format_percentage(row.get('Variance_Contribution_Pct', 0))
+
+        apply_professional_table_style(table)
+        table.columns[0].width = Inches(1)
+        table.columns[1].width = Inches(3.5)
+        table.columns[2].width = Inches(1.5)
+
+
+def add_docx_mitigation_section_enhanced(doc, df_with_roi, roi_img):
+    """Add mitigation section with captioned figure."""
+    from docx.shared import Inches
+
+    heading = doc.add_heading('Mitigation Cost-Benefit Analysis', 1)
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+
+    para = doc.add_paragraph(
+        'The ROI analysis identifies the most cost-effective mitigation opportunities, '
+        'ranking risks by the ratio of risk reduction achieved to mitigation cost invested.'
+    )
+    para.runs[0].font.name = FONTS['body']
+    para.runs[0].font.size = Pt(FONT_SIZES['body'])
+
+    # Add chart with caption
+    add_captioned_image(doc, roi_img, get_chart_caption('roi_chart'), width=Inches(6))
+
+    # Add top mitigation opportunities table
+    if 'ROI' in df_with_roi.columns:
+        doc.add_heading('Top Mitigation Opportunities', 2)
+
+        top_roi = df_with_roi.nlargest(10, 'ROI')
+        table = doc.add_table(rows=len(top_roi) + 1, cols=4)
+
+        headers = ['Risk ID', 'Mitigation Cost', 'Risk Reduction', 'ROI']
+        for j, header in enumerate(headers):
+            table.cell(0, j).text = header
+
+        for i, (_, row) in enumerate(top_roi.iterrows(), start=1):
+            table.cell(i, 0).text = str(row.get('Risk ID', ''))
+            table.cell(i, 1).text = format_currency(row.get('Cost of Measures_Value', 0) / 1_000_000)
+            table.cell(i, 2).text = format_currency(row.get('Risk_Reduction', 0) / 1_000_000)
+            table.cell(i, 3).text = f"{row.get('ROI', 0):.1f}x"
+
+        apply_professional_table_style(table)
+
+
+def add_docx_confidence_comparison_section_enhanced(doc, confidence_comparison, chart_img, confidence_level):
+    """Add confidence comparison section with captioned figure."""
+    from docx.shared import Inches
+
+    heading = doc.add_heading('Confidence Level Comparison', 1)
+    for run in heading.runs:
+        run.font.name = FONTS['heading']
+        run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['table_header']))
+
+    para = doc.add_paragraph(
+        'The following analysis compares risk exposure at different confidence levels (P50, P80, P95), '
+        'showing the trade-off between confidence and required contingency allocation.'
+    )
+    para.runs[0].font.name = FONTS['body']
+    para.runs[0].font.size = Pt(FONT_SIZES['body'])
+
+    # Add chart with caption
+    add_captioned_image(doc, chart_img, get_chart_caption('confidence_comparison'), width=Inches(6))
+
+    # Add comparison table
+    doc.add_heading('Confidence Level Summary', 2)
+
+    table = doc.add_table(rows=4, cols=4)
+    headers = ['Confidence', 'Risk Exposure', 'Mitigation Cost', 'Total Contingency']
+    for j, header in enumerate(headers):
+        table.cell(0, j).text = header
+
+    for i, level in enumerate(['P50', 'P80', 'P95'], start=1):
+        data = confidence_comparison.get(level, {})
+        table.cell(i, 0).text = level
+        table.cell(i, 1).text = format_currency(data.get('residual_value', 0))
+        table.cell(i, 2).text = format_currency(data.get('mitigation_cost', 0))
+        table.cell(i, 3).text = format_currency(data.get('total_contingency', 0))
+
+    apply_professional_table_style(table)
 
 # Main application
 def main():
