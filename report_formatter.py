@@ -428,21 +428,39 @@ def add_table_of_contents(document: Document):
     fldChar2 = OxmlElement('w:fldChar')
     fldChar2.set(qn('w:fldCharType'), 'separate')
 
+    # Add placeholder text between separate and end
+    placeholder_run = paragraph.add_run()
+    placeholder_text = OxmlElement('w:t')
+    placeholder_text.text = 'Press Ctrl+A then F9 to update Table of Contents, or right-click and select "Update Field"'
+    placeholder_run._r.append(placeholder_text)
+
     fldChar3 = OxmlElement('w:fldChar')
     fldChar3.set(qn('w:fldCharType'), 'end')
 
     run._r.append(fldChar1)
     run._r.append(instrText)
     run._r.append(fldChar2)
-    run._r.append(fldChar3)
+    paragraph._p.append(fldChar3)
 
-    # Add instruction text
-    instruction = document.add_paragraph()
-    instruction.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    inst_run = instruction.add_run("(Right-click and select 'Update Field' to refresh Table of Contents)")
-    inst_run.font.size = Pt(9)
-    inst_run.font.italic = True
-    inst_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['neutral']))
+    # Add styled instruction box
+    document.add_paragraph()
+    inst_box = document.add_table(rows=1, cols=1)
+    inst_box.alignment = WD_TABLE_ALIGNMENT.CENTER
+    inst_cell = inst_box.cell(0, 0)
+    set_cell_shading(inst_cell, KVI_COLORS['light'].lstrip('#'))
+    set_cell_border(inst_cell, color=KVI_COLORS['primary'].lstrip('#'), size='4')
+    set_cell_margins(inst_cell, top=100, bottom=100, left=150, right=150)
+
+    inst_para = inst_cell.paragraphs[0]
+    inst_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    inst_run = inst_para.add_run("📋 To generate the Table of Contents:\n")
+    inst_run.font.bold = True
+    inst_run.font.size = Pt(10)
+    inst_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['dark']))
+
+    step_run = inst_para.add_run("1. Press Ctrl+A to select all\n2. Press F9 to update fields\n3. Or right-click above and select 'Update Field'")
+    step_run.font.size = Pt(9)
+    step_run.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['neutral']))
 
     document.add_page_break()
 
