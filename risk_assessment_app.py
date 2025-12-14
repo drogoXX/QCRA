@@ -5761,7 +5761,7 @@ def add_docx_executive_summary_content(doc, initial_stats, residual_stats, df, c
 
 def add_docx_risk_portfolio_section_enhanced(doc, initial_stats, residual_stats, confidence_level, chart_img):
     """Add risk portfolio section with captioned figure."""
-    from docx.shared import Inches
+    from docx.shared import Pt, RGBColor, Inches
 
     heading = doc.add_heading('Risk Portfolio Overview', 1)
     for run in heading.runs:
@@ -5781,7 +5781,7 @@ def add_docx_risk_portfolio_section_enhanced(doc, initial_stats, residual_stats,
 
 def add_docx_3d_visualization_section_enhanced(doc, df, chart_img):
     """Add 3D visualization section with captioned figure."""
-    from docx.shared import Inches
+    from docx.shared import Pt, RGBColor, Inches
 
     heading = doc.add_heading('3D Risk Landscape Visualization', 1)
     for run in heading.runs:
@@ -5802,7 +5802,7 @@ def add_docx_3d_visualization_section_enhanced(doc, df, chart_img):
 
 def add_docx_monte_carlo_section_enhanced(doc, n_simulations, cdf_img, hist_img):
     """Add Monte Carlo section with captioned figures."""
-    from docx.shared import Inches
+    from docx.shared import Pt, RGBColor, Inches
 
     heading = doc.add_heading('Monte Carlo Simulation Results', 1)
     for run in heading.runs:
@@ -5827,7 +5827,7 @@ def add_docx_monte_carlo_section_enhanced(doc, n_simulations, cdf_img, hist_img)
 
 def add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img):
     """Add sensitivity section with captioned figure."""
-    from docx.shared import Inches
+    from docx.shared import Pt, RGBColor, Inches
 
     heading = doc.add_heading('Sensitivity Analysis', 1)
     for run in heading.runs:
@@ -5869,7 +5869,7 @@ def add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img):
 
 def add_docx_mitigation_section_enhanced(doc, df_with_roi, roi_img):
     """Add mitigation section with captioned figure."""
-    from docx.shared import Inches
+    from docx.shared import Pt, RGBColor, Inches
 
     heading = doc.add_heading('Mitigation Cost-Benefit Analysis', 1)
     for run in heading.runs:
@@ -5908,7 +5908,7 @@ def add_docx_mitigation_section_enhanced(doc, df_with_roi, roi_img):
 
 def add_docx_confidence_comparison_section_enhanced(doc, confidence_comparison, chart_img, confidence_level):
     """Add confidence comparison section with captioned figure."""
-    from docx.shared import Inches
+    from docx.shared import Pt, RGBColor, Inches
 
     heading = doc.add_heading('Confidence Level Comparison', 1)
     for run in heading.runs:
