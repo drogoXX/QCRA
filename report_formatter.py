@@ -648,12 +648,18 @@ def add_kpi_summary_box(document: Document, metrics: Dict[str, Any]):
     run4b.font.bold = True
     run4b.font.color.rgb = RGBColor(*hex_to_rgb(KVI_COLORS['success']))
 
-    # Risk profile indicator
+    # Risk profile indicator - using confidence level based profiles
     p5 = cell.add_paragraph()
     p5.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    profile = metrics.get('risk_profile', 'Moderate')
+    profile = metrics.get('risk_profile', 'Balanced / Moderate Risk Profile')
+
+    # Map profile text to colors (consistent with confidence level section)
     profile_colors = {
+        'Optimistic / High Risk Tolerance': ('#E67E22', '●'),  # Orange
+        'Balanced / Moderate Risk Profile': (KVI_COLORS['primary'], '●'),  # Blue
+        'Conservative / Low Risk Tolerance': (KVI_COLORS['success'], '●'),  # Green
+        # Legacy support
         'Low': (KVI_COLORS['success'], '●'),
         'Moderate': (KVI_COLORS['warning'], '●'),
         'High': ('#E67E22', '●'),
