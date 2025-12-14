@@ -5502,6 +5502,15 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
 
     # Convert to millions for display
     M = 1_000_000
+
+    # Determine risk profile based on confidence level (consistent with "Understanding the Selected Confidence Level" section)
+    confidence_profile_map = {
+        'P50': 'Optimistic / High Risk Tolerance',
+        'P80': 'Balanced / Moderate Risk Profile',
+        'P90': 'Balanced / Moderate Risk Profile',
+        'P95': 'Conservative / Low Risk Tolerance',
+    }
+
     kpi_metrics = {
         'total_risks': len(df),
         'threats': threat_count,
@@ -5509,7 +5518,7 @@ def generate_docx_report(initial_stats, residual_stats, df, df_with_roi, sensiti
         'initial_p80': initial_selected / M,  # Convert to millions
         'residual_p80': residual_selected / M,  # Convert to millions
         'risk_reduction_pct': risk_reduction_pct,
-        'risk_profile': get_risk_profile(risk_reduction_pct)['label'],
+        'risk_profile': confidence_profile_map.get(confidence_level, 'Balanced / Moderate Risk Profile'),
     }
 
     # Add executive summary with KPI box
@@ -5930,19 +5939,19 @@ def add_docx_sensitivity_section_enhanced(doc, sensitivity_df, pareto_img):
             table.cell(0, j).text = header
 
         for i, (_, row) in enumerate(top_10.iterrows(), start=1):
-            # Risk ID
+            # Risk ID - use direct bracket access like working old code
             id_cell = table.cell(i, 0)
-            id_cell.text = str(row.get('Risk ID', ''))
+            id_cell.text = str(row['Risk ID'])
 
             # Description (truncated)
-            desc = str(row.get('Risk Description', ''))[:50]
+            desc = str(row['Risk Description'])[:50]
             desc_cell = table.cell(i, 1)
-            desc_cell.text = desc + ('...' if len(str(row.get('Risk Description', ''))) > 50 else '')
+            desc_cell.text = desc + ('...' if len(str(row['Risk Description'])) > 50 else '')
 
-            # Variance Contribution percentage (column name is 'Variance %')
-            contribution = row.get('Variance %', 0)
+            # Variance Contribution percentage - use direct bracket access
+            contribution = row['Variance %'] if 'Variance %' in row.index else 0
             contrib_cell = table.cell(i, 2)
-            contrib_cell.text = format_percentage(contribution)
+            contrib_cell.text = f'{contribution:.1f}%'
 
             # Highlight top 3 risks with light orange background
             if i <= 3:
